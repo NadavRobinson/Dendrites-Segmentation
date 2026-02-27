@@ -1,0 +1,8 @@
+path: D:\Users\nadav\Projects\Assaf\Dendrites-Segmentation\yolo_dataset
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 1
+names:
+  0: dendrite
