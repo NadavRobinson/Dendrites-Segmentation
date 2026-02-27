@@ -45,6 +45,10 @@ RAW_ADAPTIVE_C = -5
 # Stage C: Post-processing
 EROSION_KERNEL_SIZE = 5
 EROSION_ITERATIONS = 3
+RECON_MIN_KEEP_RATIO = 0.75
+RECON_FALLBACK_MIN_KEEP_RATIO = 0.70
+RECON_FALLBACK_KERNEL_SIZE = 3
+RECON_FALLBACK_ITERATIONS = 1
 CLOSING_KERNEL_SIZE = 5
 MIN_COMPONENT_AREA = 50
 RAW_MIN_COMPONENT_AREA = 500
@@ -280,7 +284,7 @@ def segment_masklike(image):
 # Stage C: Post-processing
 # ===========================================================================
 
-def morphological_reconstruction(mask):
+def morphological_reconstruction(mask, kernel_size=None, iterations=None):
     """
     Geodesic dilation-based reconstruction to remove noise while preserving
     dendrite structure.
@@ -297,17 +301,36 @@ def morphological_reconstruction(mask):
     ----------
     mask : np.ndarray
         Binary mask (0 or 255), dtype uint8.
+    kernel_size : int or None
+        Erosion kernel size. Uses EROSION_KERNEL_SIZE if None.
+    iterations : int or None
+        Number of erosion iterations. Uses EROSION_ITERATIONS if None.
 
     Returns
     -------
     reconstructed : np.ndarray
         Cleaned binary mask (0 or 255), dtype uint8.
     """
+    if kernel_size is None:
+        kernel_size = EROSION_KERNEL_SIZE
+    if iterations is None:
+        iterations = EROSION_ITERATIONS
+
+    kernel_size = int(kernel_size)
+    if kernel_size < 1:
+        kernel_size = 1
+    if kernel_size % 2 == 0:
+        kernel_size += 1
+
+    iterations = int(iterations)
+    if iterations < 0:
+        iterations = 0
+
     kernel = cv2.getStructuringElement(
-        cv2.MORPH_ELLIPSE, (EROSION_KERNEL_SIZE, EROSION_KERNEL_SIZE)
+        cv2.MORPH_ELLIPSE, (kernel_size, kernel_size)
     )
     # Create marker by aggressive erosion — only thick cores remain
-    marker = cv2.erode(mask, kernel, iterations=EROSION_ITERATIONS)
+    marker = cv2.erode(mask, kernel, iterations=iterations)
 
     # skimage reconstruction expects float images in [0, 1]
     marker_f = (marker / 255.0).astype(np.float64)
@@ -399,7 +422,40 @@ def postprocess(mask, min_area=None):
     intermediates : dict
         Dictionary of intermediate masks.
     """
+    orig_area = int(np.count_nonzero(mask))
     recon = morphological_reconstruction(mask)
+    recon_area = int(np.count_nonzero(recon))
+
+    if orig_area > 0:
+        keep_ratio = recon_area / float(orig_area)
+    else:
+        keep_ratio = 1.0
+
+    if keep_ratio < RECON_MIN_KEEP_RATIO:
+        recon_gentle = morphological_reconstruction(
+            mask,
+            kernel_size=RECON_FALLBACK_KERNEL_SIZE,
+            iterations=RECON_FALLBACK_ITERATIONS,
+        )
+        gentle_area = int(np.count_nonzero(recon_gentle))
+        gentle_keep_ratio = gentle_area / float(orig_area) if orig_area > 0 else 1.0
+
+        if gentle_keep_ratio >= RECON_FALLBACK_MIN_KEEP_RATIO:
+            recon = recon_gentle
+            print(
+                "  Reconstruction fallback: "
+                f"default keep_ratio={keep_ratio:.3f} < {RECON_MIN_KEEP_RATIO:.2f}; "
+                f"using gentle keep_ratio={gentle_keep_ratio:.3f}."
+            )
+        else:
+            recon = mask.copy()
+            print(
+                "  Reconstruction fallback: "
+                f"default keep_ratio={keep_ratio:.3f}, "
+                f"gentle keep_ratio={gentle_keep_ratio:.3f}; "
+                "using original mask."
+            )
+
     closed = apply_closing(recon)
     cleaned = remove_small_components(closed, min_area=min_area)
     area_threshold = MIN_COMPONENT_AREA if min_area is None else int(min_area)
