@@ -1,12 +1,16 @@
 import cv2
 import numpy as np
 
-# File paths
-image_path = 'Easy.jpg'
-txt_path = 'Easy.txt'
-
 # The cutoff value you used in the first script
-cutoff_value = 350 
+cutoff_value = 120
+
+# File paths
+file = 'easy_2'
+ann_input_folder = 'annotations/Easy/'
+image_input_folder = 'maked_dataset/Easy/'
+output_folder = 'visualizations/Easy/'
+image_path = f'{image_input_folder}{file}.jpg'
+txt_path = f'{ann_input_folder}{file}.txt'
 
 # Load the image in color so we can draw colored lines on it
 img = cv2.imread(image_path)
@@ -42,7 +46,7 @@ except FileNotFoundError:
 y_cutoff_line = height - cutoff_value
 cv2.line(img, (0, y_cutoff_line), (width, y_cutoff_line), (0, 0, 255), 2)
 
-# Display the result
-cv2.imshow('YOLO Annotations (Green) and Cutoff Line (Red)', img)
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+# Save the result
+output_path = f'{output_folder}{file}_visualization.png'
+cv2.imwrite(output_path, img)
+print(f"Saved visualization to {output_path}")

@@ -1,24 +1,31 @@
 import cv2
 import numpy as np
 
+cutoff_value = 120
+
 # 1. Load your binary mask
-image_path = 'Easy.jpg'
+file = 'easy_2'
+inout_folder = 'maked_dataset/Easy/'
+output_folder = 'annotations/Easy/'
+image_path = f'{inout_folder}{file}.jpg'
+print(f"Loading mask from {image_path}")
 mask = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
 height, width = mask.shape
 
-# IMPORTANT: Black out the bottom solid substrate so it doesn't get labeled as a dendrite.
-# You will need to tweak the '150' to perfectly match the height of the substrate line.
-mask[height-197:height, :] = 0 
+# IMPORTANT: Adjust this cutoff value to completely sever the trees from the base! # Try increasing this slightly if they are still connected
+print(f"Image dimensions: {width}x{height}, Cutoff value: {cutoff_value}")
+mask[height-cutoff_value:height, :] = 0 
 
-# 2. Find the contours (outlines) of the white shapes
-contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+# 2. Find contours using CHAIN_APPROX_NONE for maximum detail
+# This captures EVERY boundary pixel, creating a very dense, accurate polygon
+contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
-class_id = 0 # Assuming 'dendrite' is your first/only class
+class_id = 0 
 
 # 3. Write to a YOLO formatted text file
-with open(f'{image_path.split(".")[0]}.txt', 'w') as f:
+with open(f'{output_folder}{file}.txt', 'w') as f:
     for contour in contours:
-        # Filter out tiny white specks/noise (adjust the 50 as needed)
+        # Filter out tiny white specks/noise 
         if cv2.contourArea(contour) < 50:
             continue
             
@@ -33,4 +40,4 @@ with open(f'{image_path.split(".")[0]}.txt', 'w') as f:
         yolo_line = f"{class_id} " + " ".join(normalized_coords) + "\n"
         f.write(yolo_line)
 
-print("YOLO annotation file generated successfully!")
+print("Strict YOLO annotation file generated successfully!")
