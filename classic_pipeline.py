@@ -38,11 +38,16 @@ BILATERAL_SIGMA_SPACE = 75
 ADAPTIVE_BLOCK_SIZE = 51
 ADAPTIVE_C = 5
 
+# Raw SEM tuning (applied when input is not mask-like)
+RAW_ADAPTIVE_BLOCK_SIZE = 51
+RAW_ADAPTIVE_C = -5
+
 # Stage C: Post-processing
 EROSION_KERNEL_SIZE = 5
 EROSION_ITERATIONS = 3
 CLOSING_KERNEL_SIZE = 5
 MIN_COMPONENT_AREA = 50
+RAW_MIN_COMPONENT_AREA = 500
 
 # Stage D: Separation
 DISTANCE_THRESHOLD = 0.4  # fraction of max distance for watershed markers
@@ -205,7 +210,7 @@ def preprocess(image):
 # Stage B: Segmentation
 # ===========================================================================
 
-def segment_adaptive(image):
+def segment_adaptive(image, block_size=None, c=None):
     """
     Adaptive thresholding — computes a local threshold per pixel based on
     neighborhood mean. Preferred for SEM images with non-uniform illumination.
@@ -220,12 +225,24 @@ def segment_adaptive(image):
     mask : np.ndarray
         Binary mask (0 or 255), dtype uint8.
     """
+    if block_size is None:
+        block_size = ADAPTIVE_BLOCK_SIZE
+    if c is None:
+        c = ADAPTIVE_C
+
+    # Adaptive threshold block size must be odd and >= 3
+    block_size = int(block_size)
+    if block_size < 3:
+        block_size = 3
+    if block_size % 2 == 0:
+        block_size += 1
+
     mask = cv2.adaptiveThreshold(
         image, 255,
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY,
-        ADAPTIVE_BLOCK_SIZE,
-        ADAPTIVE_C
+        block_size,
+        c
     )
     return mask
 
@@ -366,7 +383,7 @@ def fill_external_contours(mask, min_area=50):
     return filled
 
 
-def postprocess(mask):
+def postprocess(mask, min_area=None):
     """
     Full post-processing pipeline: reconstruction → closing → small component removal.
 
@@ -384,8 +401,9 @@ def postprocess(mask):
     """
     recon = morphological_reconstruction(mask)
     closed = apply_closing(recon)
-    cleaned = remove_small_components(closed)
-    filled = fill_external_contours(cleaned, min_area=MIN_COMPONENT_AREA)
+    cleaned = remove_small_components(closed, min_area=min_area)
+    area_threshold = MIN_COMPONENT_AREA if min_area is None else int(min_area)
+    filled = fill_external_contours(cleaned, min_area=area_threshold)
 
     intermediates = {
         "07_reconstructed": recon,
@@ -523,12 +541,18 @@ def run_classic_pipeline(image_path, output_dir=None, save_intermediates=True, c
     masklike_mode = is_masklike_input(image)
     if masklike_mode:
         seg_mask = segment_masklike(image)
+        min_area = MIN_COMPONENT_AREA
     else:
-        seg_mask = segment_adaptive(preprocessed)
+        seg_mask = segment_adaptive(
+            preprocessed,
+            block_size=RAW_ADAPTIVE_BLOCK_SIZE,
+            c=RAW_ADAPTIVE_C,
+        )
+        min_area = RAW_MIN_COMPONENT_AREA
     preprocess_ints["06_segmented"] = seg_mask
 
     # Stage C: Post-processing
-    clean_mask, postprocess_ints = postprocess(seg_mask)
+    clean_mask, postprocess_ints = postprocess(seg_mask, min_area=min_area)
 
     # Optional dataset-specific bottom-strip removal (easy_1..easy_10).
     clean_mask = apply_known_cutoff(clean_mask, basename, cutoff_map)
