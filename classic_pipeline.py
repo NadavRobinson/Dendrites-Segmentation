@@ -124,6 +124,38 @@ def zero_below_baseline(mask, baseline_row):
     return out
 
 
+def restore_band_components_from_reference(target_mask, reference_mask, baseline_row, band_height=None):
+    """
+    Restore connected components from reference_mask whose bottom lies in the
+    baseline band into target_mask.
+    """
+    if (
+        baseline_row is None
+        or target_mask is None
+        or reference_mask is None
+        or target_mask.shape != reference_mask.shape
+    ):
+        return target_mask
+
+    if band_height is None:
+        band_height = SMALL_TREE_BAND_HEIGHT
+
+    band_top = max(0, int(baseline_row) - int(band_height))
+    band_bottom = int(baseline_row)
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        reference_mask, connectivity=8
+    )
+    out = target_mask.copy()
+    for i in range(1, num_labels):
+        top = int(stats[i, cv2.CC_STAT_TOP])
+        height = int(stats[i, cv2.CC_STAT_HEIGHT])
+        bottom = top + height - 1
+        if band_top <= bottom <= band_bottom and top <= band_bottom:
+            out[labels == i] = 255
+    return out
+
+
 def is_masklike_input(image):
     """
     Detect quasi-binary inputs (mostly 0/255) from pre-generated masks.
@@ -455,6 +487,10 @@ def postprocess(mask, min_area=None, baseline_row=None):
 
     orig_area = int(np.count_nonzero(small_removed))
     recon = morphological_reconstruction(small_removed)
+    recon = restore_band_components_from_reference(
+        recon, small_removed, baseline_row
+    )
+    recon = zero_below_baseline(recon, baseline_row)
     recon_area = int(np.count_nonzero(recon))
 
     if orig_area > 0:
@@ -473,6 +509,10 @@ def postprocess(mask, min_area=None, baseline_row=None):
 
         if gentle_keep_ratio >= RECON_FALLBACK_MIN_KEEP_RATIO:
             recon = recon_gentle
+            recon = restore_band_components_from_reference(
+                recon, small_removed, baseline_row
+            )
+            recon = zero_below_baseline(recon, baseline_row)
             print(
                 "  Reconstruction fallback: "
                 f"default keep_ratio={keep_ratio:.3f} < {RECON_MIN_KEEP_RATIO:.2f}; "
@@ -488,6 +528,9 @@ def postprocess(mask, min_area=None, baseline_row=None):
             )
 
     closed = apply_closing(recon)
+    closed = restore_band_components_from_reference(
+        closed, small_removed, baseline_row
+    )
     closed = zero_below_baseline(closed, baseline_row)
 
     intermediates = {
