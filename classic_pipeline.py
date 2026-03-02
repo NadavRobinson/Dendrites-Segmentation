@@ -56,54 +56,12 @@ BASELINE_DETECT_MIN_ROW_RATIO = 0.90
 BASELINE_DETECT_SEARCH_START_RATIO = 0.55
 BASELINE_DETECT_MIN_RUN = 5
 SMALL_TREE_BAND_HEIGHT = 30
-USE_EXTERNAL_CONTOUR_FILL = False
 
 # Stage D: Separation
 DISTANCE_THRESHOLD = 0.4  # fraction of max distance for watershed markers
 
-# Dataset-specific cutoff file (used for easy_* samples with known base strip)
-CUTOFFS_FILE = "cut_offs.txt"
-
 # Heuristic: image is considered mask-like if most pixels are near 0/255
 MASKLIKE_BIMODAL_RATIO = 0.85
-
-
-def load_cutoff_map(cutoffs_file=CUTOFFS_FILE):
-    """
-    Load per-image cutoff values from cut_offs.txt.
-
-    The file is expected to contain 10 lines for easy_1 .. easy_10.
-    Returns an empty dict if the file does not exist.
-    """
-    if not os.path.isfile(cutoffs_file):
-        return {}
-
-    values = []
-    with open(cutoffs_file, "r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                values.append(int(line))
-
-    mapping = {}
-    for i, v in enumerate(values, start=1):
-        mapping[f"easy_{i}"] = v
-    return mapping
-
-
-def apply_known_cutoff(mask, image_name, cutoff_map):
-    """
-    Zero out the bottom strip according to pre-defined per-image cutoff.
-    """
-    cutoff = cutoff_map.get(image_name)
-    if cutoff is None:
-        return mask
-    h = mask.shape[0]
-    y0 = max(0, h - int(cutoff))
-    out = mask.copy()
-    out[y0:h, :] = 0
-    return out
-
 
 def _find_longest_true_run(flags):
     """
@@ -474,18 +432,6 @@ def remove_small_components(mask, min_area=None, baseline_row=None):
     return cleaned
 
 
-def fill_external_contours(mask, min_area=50):
-    """
-    Fill external contours to create compact branch regions.
-    """
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    filled = np.zeros_like(mask)
-    valid = [cnt for cnt in contours if cv2.contourArea(cnt) >= min_area]
-    if valid:
-        cv2.drawContours(filled, valid, -1, 255, thickness=cv2.FILLED)
-    return filled
-
-
 def postprocess(mask, min_area=None, baseline_row=None):
     """
     Full post-processing pipeline: reconstruction → closing → small component removal.
@@ -541,20 +487,13 @@ def postprocess(mask, min_area=None, baseline_row=None):
         closed, min_area=min_area, baseline_row=baseline_row
     )
     cleaned = zero_below_baseline(cleaned, baseline_row)
-    if USE_EXTERNAL_CONTOUR_FILL:
-        area_threshold = MIN_COMPONENT_AREA if min_area is None else int(min_area)
-        filled = fill_external_contours(cleaned, min_area=area_threshold)
-    else:
-        filled = cleaned.copy()
-    filled = zero_below_baseline(filled, baseline_row)
 
     intermediates = {
         "07_reconstructed": recon,
         "08_closed": closed,
         "09_small_removed": cleaned,
-        "09b_filled": filled,
     }
-    return filled, intermediates
+    return cleaned, intermediates
 
 
 # ===========================================================================
@@ -645,7 +584,7 @@ def skeletonize_mask(mask):
 # Pipeline orchestration
 # ===========================================================================
 
-def run_classic_pipeline(image_path, output_dir=None, save_intermediates=True, cutoff_map=None):
+def run_classic_pipeline(image_path, output_dir=None, save_intermediates=True):
     """
     Run the full classic segmentation pipeline on a single SEM image.
 
@@ -671,9 +610,6 @@ def run_classic_pipeline(image_path, output_dir=None, save_intermediates=True, c
     image = load_image(image_path, grayscale=True)
     basename = os.path.splitext(os.path.basename(image_path))[0]
     print(f"Processing: {basename} ({image.shape[1]}x{image.shape[0]})")
-
-    if cutoff_map is None:
-        cutoff_map = load_cutoff_map()
 
     # Stage A: Pre-processing
     preprocessed, preprocess_ints = preprocess(image)
@@ -704,10 +640,6 @@ def run_classic_pipeline(image_path, output_dir=None, save_intermediates=True, c
         seg_mask, min_area=min_area, baseline_row=baseline_row
     )
     clean_mask = zero_below_baseline(clean_mask, baseline_row)
-
-    # Optional dataset-specific bottom-strip removal (easy_1..easy_10).
-    clean_mask = apply_known_cutoff(clean_mask, basename, cutoff_map)
-    postprocess_ints["09c_cutoff_applied"] = clean_mask
 
     # Stage D: Separation
     if masklike_mode:
@@ -768,16 +700,14 @@ def process_all_images(input_dir, output_dir):
         return {}
 
     print(f"Found {len(image_paths)} images in {input_dir}\n")
-    cutoff_map = load_cutoff_map()
     all_results = {}
     for path in image_paths:
-        basename = os.path.splitext(os.path.basename(path))[0]
         results = run_classic_pipeline(
             path,
             output_dir,
             save_intermediates=True,
-            cutoff_map=cutoff_map,
         )
+        basename = os.path.splitext(os.path.basename(path))[0]
         all_results[basename] = results
         print()
 

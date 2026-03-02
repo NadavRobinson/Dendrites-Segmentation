@@ -34,11 +34,82 @@ DEFAULT_PATIENCE = 20              # Early stopping patience
 DEFAULT_FREEZE = 10                # Freeze first N backbone layers
 DEFAULT_LR0 = 0.001                # Initial learning rate
 DEFAULT_CONF = 0.25                # Inference confidence threshold
+DEFAULT_WORKERS = 0 if os.name == "nt" else 8
 
 
 # ===========================================================================
 # Dataset preparation
 # ===========================================================================
+
+def ensure_three_channel_dataset(dataset_dir):
+    """
+    Normalize dataset images to 3-channel PNG files.
+
+    Ultralytics pretrained YOLO models expect 3-channel inputs. This helper
+    converts grayscale/alpha images to BGR and rewrites non-PNG formats to PNG
+    to avoid TIFF metadata/decoder edge cases.
+
+    Parameters
+    ----------
+    dataset_dir : str
+        Root directory containing train/valid(/test) image folders.
+    """
+    split_dirs = [
+        os.path.join(dataset_dir, "train", "images"),
+        os.path.join(dataset_dir, "valid", "images"),
+        os.path.join(dataset_dir, "test", "images"),
+    ]
+    converted = 0
+    total = 0
+
+    for image_dir in split_dirs:
+        if not os.path.isdir(image_dir):
+            continue
+
+        image_paths = list_images(image_dir)
+        for image_path in image_paths:
+            total += 1
+            image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+            if image is None:
+                print(f"  WARNING: Could not read image: {image_path}")
+                continue
+
+            if image.ndim == 2:
+                image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+            elif image.ndim == 3 and image.shape[2] == 1:
+                image = cv2.cvtColor(image[:, :, 0], cv2.COLOR_GRAY2BGR)
+            elif image.ndim == 3 and image.shape[2] == 4:
+                image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+            elif image.ndim == 3 and image.shape[2] == 3:
+                pass
+            else:
+                print(f"  WARNING: Unsupported image shape {image.shape} at {image_path}")
+                continue
+
+            dst_path = os.path.splitext(image_path)[0] + ".png"
+            needs_rewrite = (os.path.splitext(image_path)[1].lower() != ".png")
+            if needs_rewrite:
+                ok = cv2.imwrite(dst_path, image)
+                if not ok:
+                    raise RuntimeError(f"Failed to write normalized image: {dst_path}")
+                if os.path.normcase(dst_path) != os.path.normcase(image_path):
+                    os.remove(image_path)
+                converted += 1
+            else:
+                # Keep PNG format, but ensure 3 channels if source was grayscale/alpha.
+                if image.ndim == 3 and image.shape[2] == 3:
+                    ok = cv2.imwrite(image_path, image)
+                    if not ok:
+                        raise RuntimeError(f"Failed to update image: {image_path}")
+
+    # Remove stale Ultralytics cache files so new image metadata is re-read.
+    for split in ("train", "valid", "test"):
+        cache_path = os.path.join(dataset_dir, split, "labels.cache")
+        if os.path.isfile(cache_path):
+            os.remove(cache_path)
+
+    print(f"  Normalized images to 3-channel PNG: converted {converted}/{total}")
+
 
 def prepare_yolo_dataset(roboflow_dir, output_yaml=None):
     """
@@ -98,6 +169,9 @@ def prepare_yolo_dataset(roboflow_dir, output_yaml=None):
         print(f"  WARNING: Image/label count mismatch in train "
               f"({train_imgs} vs {train_labels})")
 
+    # Ensure all dataset images are 3-channel so pretrained YOLO models can train.
+    ensure_three_channel_dataset(roboflow_dir)
+
     # Check or create dataset.yaml
     yaml_path = output_yaml or os.path.join(roboflow_dir, "data.yaml")
 
@@ -128,7 +202,7 @@ def prepare_yolo_dataset(roboflow_dir, output_yaml=None):
 def train_yolo(dataset_yaml, model=DEFAULT_MODEL, epochs=DEFAULT_EPOCHS,
                imgsz=DEFAULT_IMGSZ, batch=DEFAULT_BATCH,
                patience=DEFAULT_PATIENCE, freeze=DEFAULT_FREEZE,
-               lr0=DEFAULT_LR0, project=None):
+               lr0=DEFAULT_LR0, project=None, workers=DEFAULT_WORKERS):
     """
     Train YOLO-Seg model with transfer learning.
 
@@ -155,6 +229,8 @@ def train_yolo(dataset_yaml, model=DEFAULT_MODEL, epochs=DEFAULT_EPOCHS,
         Initial learning rate.
     project : str or None
         Output project directory. Defaults to 'output/yolo/train'.
+    workers : int
+        Number of dataloader workers. Use 0 on restricted Windows setups.
 
     Returns
     -------
@@ -176,6 +252,7 @@ def train_yolo(dataset_yaml, model=DEFAULT_MODEL, epochs=DEFAULT_EPOCHS,
     print(f"  Patience: {patience}")
     print(f"  Freeze:   {freeze} layers")
     print(f"  LR0:      {lr0}")
+    print(f"  Workers:  {workers}")
     print(f"{'='*60}\n")
 
     yolo_model = YOLO(model)
@@ -188,6 +265,7 @@ def train_yolo(dataset_yaml, model=DEFAULT_MODEL, epochs=DEFAULT_EPOCHS,
         patience=patience,
         freeze=freeze,
         lr0=lr0,
+        workers=workers,
         project=project,
         name="dendrite_seg",
         exist_ok=True,
@@ -344,6 +422,7 @@ def main():
     train_parser.add_argument("--patience", type=int, default=DEFAULT_PATIENCE)
     train_parser.add_argument("--freeze", type=int, default=DEFAULT_FREEZE)
     train_parser.add_argument("--lr0", type=float, default=DEFAULT_LR0)
+    train_parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS)
     train_parser.add_argument("--project", default=None)
 
     # Predict command
@@ -364,7 +443,8 @@ def main():
         train_yolo(
             yaml_path, model=args.model, epochs=args.epochs,
             imgsz=args.imgsz, batch=args.batch, patience=args.patience,
-            freeze=args.freeze, lr0=args.lr0, project=args.project
+            freeze=args.freeze, lr0=args.lr0,
+            workers=args.workers, project=args.project
         )
 
     elif args.command == "predict":
