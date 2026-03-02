@@ -52,6 +52,12 @@ RECON_FALLBACK_ITERATIONS = 1
 CLOSING_KERNEL_SIZE = 5
 MIN_COMPONENT_AREA = 50
 RAW_MIN_COMPONENT_AREA = 300
+BASELINE_DETECT_MIN_ROW_RATIO = 0.90
+BASELINE_DETECT_SEARCH_START_RATIO = 0.55
+BASELINE_DETECT_MIN_RUN = 5
+SMALL_TREE_BAND_HEIGHT = 50
+SMALL_TREE_MIN_AREA = 40
+SMALL_TREE_MIN_HEIGHT = 8
 
 # Stage D: Separation
 DISTANCE_THRESHOLD = 0.4  # fraction of max distance for watershed markers
@@ -95,6 +101,67 @@ def apply_known_cutoff(mask, image_name, cutoff_map):
         return mask
     h = mask.shape[0]
     y0 = max(0, h - int(cutoff))
+    out = mask.copy()
+    out[y0:h, :] = 0
+    return out
+
+
+def _find_longest_true_run(flags):
+    """
+    Return (start_index, run_length) of the longest True run in a 1D bool array.
+    """
+    best_start = -1
+    best_len = 0
+    run_start = -1
+
+    for i, val in enumerate(flags):
+        if val and run_start < 0:
+            run_start = i
+        elif (not val) and run_start >= 0:
+            run_len = i - run_start
+            if run_len > best_len:
+                best_start = run_start
+                best_len = run_len
+            run_start = -1
+
+    if run_start >= 0:
+        run_len = len(flags) - run_start
+        if run_len > best_len:
+            best_start = run_start
+            best_len = run_len
+
+    return best_start, best_len
+
+
+def detect_baseline_row(mask):
+    """
+    Detect baseline row (horizontal bright strip under the forest) in a mask.
+    """
+    if mask is None or mask.ndim != 2 or mask.size == 0:
+        return None
+
+    h = mask.shape[0]
+    y_start = int(round(h * BASELINE_DETECT_SEARCH_START_RATIO))
+    y_start = max(0, min(h - 1, y_start))
+
+    row_ratio = np.mean(mask > 0, axis=1)
+    candidates = row_ratio[y_start:] >= BASELINE_DETECT_MIN_ROW_RATIO
+    run_start, run_len = _find_longest_true_run(candidates)
+
+    if run_start < 0 or run_len < BASELINE_DETECT_MIN_RUN:
+        return None
+
+    return y_start + run_start
+
+
+def zero_below_baseline(mask, baseline_row):
+    """
+    Set baseline row and everything below it to zero.
+    """
+    if baseline_row is None:
+        return mask
+    h = mask.shape[0]
+    y0 = max(0, min(h, int(baseline_row)))
     out = mask.copy()
     out[y0:h, :] = 0
     return out
@@ -363,7 +430,7 @@ def apply_closing(mask):
     return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
 
-def remove_small_components(mask, min_area=None):
+def remove_small_components(mask, min_area=None, baseline_row=None):
     """
     Remove connected components smaller than min_area pixels.
     Based on the physical assumption that dendrites are large,
@@ -375,6 +442,9 @@ def remove_small_components(mask, min_area=None):
         Binary mask (0 or 255), dtype uint8.
     min_area : int or None
         Minimum component area in pixels. Uses MIN_COMPONENT_AREA if None.
+    baseline_row : int or None
+        If provided, preserve small components located in the 50-pixel band
+        directly above the baseline (likely small trees).
 
     Returns
     -------
@@ -389,7 +459,25 @@ def remove_small_components(mask, min_area=None):
     )
     cleaned = np.zeros_like(mask)
     for i in range(1, num_labels):
-        if stats[i, cv2.CC_STAT_AREA] >= min_area:
+        area = int(stats[i, cv2.CC_STAT_AREA])
+        if area >= min_area:
+            cleaned[labels == i] = 255
+            continue
+
+        if baseline_row is None:
+            continue
+
+        top = int(stats[i, cv2.CC_STAT_TOP])
+        height = int(stats[i, cv2.CC_STAT_HEIGHT])
+        bottom = top + height - 1
+        band_top = max(0, int(baseline_row) - SMALL_TREE_BAND_HEIGHT)
+        band_bottom = int(baseline_row)
+
+        if (
+            area >= SMALL_TREE_MIN_AREA
+            and height >= SMALL_TREE_MIN_HEIGHT
+            and band_top <= bottom <= band_bottom
+        ):
             cleaned[labels == i] = 255
     return cleaned
 
@@ -406,7 +494,7 @@ def fill_external_contours(mask, min_area=50):
     return filled
 
 
-def postprocess(mask, min_area=None):
+def postprocess(mask, min_area=None, baseline_row=None):
     """
     Full post-processing pipeline: reconstruction → closing → small component removal.
 
@@ -457,9 +545,13 @@ def postprocess(mask, min_area=None):
             )
 
     closed = apply_closing(recon)
-    cleaned = remove_small_components(closed, min_area=min_area)
+    cleaned = remove_small_components(
+        closed, min_area=min_area, baseline_row=baseline_row
+    )
+    cleaned = zero_below_baseline(cleaned, baseline_row)
     area_threshold = MIN_COMPONENT_AREA if min_area is None else int(min_area)
     filled = fill_external_contours(cleaned, min_area=area_threshold)
+    filled = zero_below_baseline(filled, baseline_row)
 
     intermediates = {
         "07_reconstructed": recon,
@@ -606,9 +698,17 @@ def run_classic_pipeline(image_path, output_dir=None, save_intermediates=True, c
         )
         min_area = RAW_MIN_COMPONENT_AREA
     preprocess_ints["06_segmented"] = seg_mask
+    baseline_row = detect_baseline_row(seg_mask)
+    if baseline_row is not None:
+        print(f"  Baseline detected at row={baseline_row}")
+    seg_mask = zero_below_baseline(seg_mask, baseline_row)
+    preprocess_ints["06b_baseline_cut"] = seg_mask
 
     # Stage C: Post-processing
-    clean_mask, postprocess_ints = postprocess(seg_mask, min_area=min_area)
+    clean_mask, postprocess_ints = postprocess(
+        seg_mask, min_area=min_area, baseline_row=baseline_row
+    )
+    clean_mask = zero_below_baseline(clean_mask, baseline_row)
 
     # Optional dataset-specific bottom-strip removal (easy_1..easy_10).
     clean_mask = apply_known_cutoff(clean_mask, basename, cutoff_map)
