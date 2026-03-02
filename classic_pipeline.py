@@ -55,7 +55,8 @@ RAW_MIN_COMPONENT_AREA = 300
 BASELINE_DETECT_MIN_ROW_RATIO = 0.90
 BASELINE_DETECT_SEARCH_START_RATIO = 0.55
 BASELINE_DETECT_MIN_RUN = 5
-SMALL_TREE_BAND_HEIGHT = 50
+SMALL_TREE_BAND_HEIGHT = 30
+USE_EXTERNAL_CONTOUR_FILL = False
 
 # Stage D: Separation
 DISTANCE_THRESHOLD = 0.4  # fraction of max distance for watershed markers
@@ -540,8 +541,11 @@ def postprocess(mask, min_area=None, baseline_row=None):
         closed, min_area=min_area, baseline_row=baseline_row
     )
     cleaned = zero_below_baseline(cleaned, baseline_row)
-    area_threshold = MIN_COMPONENT_AREA if min_area is None else int(min_area)
-    filled = fill_external_contours(cleaned, min_area=area_threshold)
+    if USE_EXTERNAL_CONTOUR_FILL:
+        area_threshold = MIN_COMPONENT_AREA if min_area is None else int(min_area)
+        filled = fill_external_contours(cleaned, min_area=area_threshold)
+    else:
+        filled = cleaned.copy()
     filled = zero_below_baseline(filled, baseline_row)
 
     intermediates = {
