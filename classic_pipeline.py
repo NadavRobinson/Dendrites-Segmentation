@@ -448,8 +448,13 @@ def postprocess(mask, min_area=None, baseline_row=None):
     intermediates : dict
         Dictionary of intermediate masks.
     """
-    orig_area = int(np.count_nonzero(mask))
-    recon = morphological_reconstruction(mask)
+    small_removed = remove_small_components(
+        mask, min_area=min_area, baseline_row=baseline_row
+    )
+    small_removed = zero_below_baseline(small_removed, baseline_row)
+
+    orig_area = int(np.count_nonzero(small_removed))
+    recon = morphological_reconstruction(small_removed)
     recon_area = int(np.count_nonzero(recon))
 
     if orig_area > 0:
@@ -459,7 +464,7 @@ def postprocess(mask, min_area=None, baseline_row=None):
 
     if keep_ratio < RECON_MIN_KEEP_RATIO:
         recon_gentle = morphological_reconstruction(
-            mask,
+            small_removed,
             kernel_size=RECON_FALLBACK_KERNEL_SIZE,
             iterations=RECON_FALLBACK_ITERATIONS,
         )
@@ -474,7 +479,7 @@ def postprocess(mask, min_area=None, baseline_row=None):
                 f"using gentle keep_ratio={gentle_keep_ratio:.3f}."
             )
         else:
-            recon = mask.copy()
+            recon = small_removed.copy()
             print(
                 "  Reconstruction fallback: "
                 f"default keep_ratio={keep_ratio:.3f}, "
@@ -483,17 +488,14 @@ def postprocess(mask, min_area=None, baseline_row=None):
             )
 
     closed = apply_closing(recon)
-    cleaned = remove_small_components(
-        closed, min_area=min_area, baseline_row=baseline_row
-    )
-    cleaned = zero_below_baseline(cleaned, baseline_row)
+    closed = zero_below_baseline(closed, baseline_row)
 
     intermediates = {
-        "07_reconstructed": recon,
-        "08_closed": closed,
-        "09_small_removed": cleaned,
+        "07_small_removed": small_removed,
+        "08_reconstructed": recon,
+        "09_closed": closed,
     }
-    return cleaned, intermediates
+    return closed, intermediates
 
 
 # ===========================================================================
