@@ -56,8 +56,6 @@ BASELINE_DETECT_MIN_ROW_RATIO = 0.90
 BASELINE_DETECT_SEARCH_START_RATIO = 0.55
 BASELINE_DETECT_MIN_RUN = 5
 SMALL_TREE_BAND_HEIGHT = 50
-SMALL_TREE_MIN_AREA = 40
-SMALL_TREE_MIN_HEIGHT = 8
 
 # Stage D: Separation
 DISTANCE_THRESHOLD = 0.4  # fraction of max distance for watershed markers
@@ -443,8 +441,8 @@ def remove_small_components(mask, min_area=None, baseline_row=None):
     min_area : int or None
         Minimum component area in pixels. Uses MIN_COMPONENT_AREA if None.
     baseline_row : int or None
-        If provided, preserve small components located in the 50-pixel band
-        directly above the baseline (likely small trees).
+        If provided, preserve any component whose bottom lies in the
+        50-pixel band directly above the baseline.
 
     Returns
     -------
@@ -460,24 +458,17 @@ def remove_small_components(mask, min_area=None, baseline_row=None):
     cleaned = np.zeros_like(mask)
     for i in range(1, num_labels):
         area = int(stats[i, cv2.CC_STAT_AREA])
-        if area >= min_area:
-            cleaned[labels == i] = 255
-            continue
-
-        if baseline_row is None:
-            continue
-
         top = int(stats[i, cv2.CC_STAT_TOP])
         height = int(stats[i, cv2.CC_STAT_HEIGHT])
         bottom = top + height - 1
-        band_top = max(0, int(baseline_row) - SMALL_TREE_BAND_HEIGHT)
-        band_bottom = int(baseline_row)
+        if baseline_row is not None:
+            band_top = max(0, int(baseline_row) - SMALL_TREE_BAND_HEIGHT)
+            band_bottom = int(baseline_row)
+            if band_top <= bottom <= band_bottom and top <= band_bottom:
+                cleaned[labels == i] = 255
+                continue
 
-        if (
-            area >= SMALL_TREE_MIN_AREA
-            and height >= SMALL_TREE_MIN_HEIGHT
-            and band_top <= bottom <= band_bottom
-        ):
+        if area >= min_area:
             cleaned[labels == i] = 255
     return cleaned
 
