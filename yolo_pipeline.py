@@ -26,7 +26,7 @@ from utils import load_image, save_image, list_images
 # Training hyperparameters
 # ---------------------------------------------------------------------------
 
-DEFAULT_MODEL = "yolo11n-seg.pt"   # Nano model — fast training, decent accuracy
+DEFAULT_MODEL = "yolo11x-seg.pt"   # Nano model — fast training, decent accuracy
 DEFAULT_EPOCHS = 100
 DEFAULT_IMGSZ = 640
 DEFAULT_BATCH = 8
@@ -284,7 +284,7 @@ def predict_batch(model_path, input_dir, output_dir, conf=DEFAULT_CONF):
         basename = os.path.splitext(os.path.basename(path))[0]
 
         # Run inference
-        preds = model.predict(path, conf=conf, verbose=False)
+        preds = model.predict(path, conf=conf, verbose=False, save=True)
         image = cv2.imread(path)
         h, w = image.shape[:2]
 
