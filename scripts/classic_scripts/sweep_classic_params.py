@@ -37,6 +37,12 @@ from datetime import datetime
 import cv2
 import numpy as np
 
+# Make local classic scripts importable regardless of launch directory.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+
 import classic_pipeline as cp
 from utils import create_comparison_strip, create_overlay, list_images, load_image, save_image
 
@@ -53,6 +59,27 @@ DEFAULT_PARAM_SPACE = {
     "EROSION_ITERATIONS": [1, 2, 3],
     "CLOSING_KERNEL_SIZE": [3, 5, 7],
     "DISTANCE_THRESHOLD": [0.30, 0.40, 0.50],
+}
+
+# Focused follow-up around combo_0027 (best by your manual priorities):
+# - keep small_easy_tree retention (priority #1)
+# - preserve strong big_hard_tree denoising (priority #2)
+# - try to improve line_hard_tree removal (priority #3)
+COMBO27_REFINE_SPACE = {
+    "CLAHE_CLIP_LIMIT": [2.0],
+    "BILATERAL_SIGMA_COLOR": [50, 65],
+    "RAW_ADAPTIVE_BLOCK_SIZE": [67],
+    "RAW_ADAPTIVE_C": [-9, -10],
+    "RAW_MIN_COMPONENT_AREA": [425, 450, 475],
+    "EROSION_KERNEL_SIZE": [3],
+    "EROSION_ITERATIONS": [1],
+    "CLOSING_KERNEL_SIZE": [3],
+    "DISTANCE_THRESHOLD": [0.30, 0.35, 0.40],
+}
+
+PRESET_SPACES = {
+    "combo27_refine": COMBO27_REFINE_SPACE,
+    "default": DEFAULT_PARAM_SPACE,
 }
 
 
@@ -194,9 +221,12 @@ def compute_combo_score(per_image_rows: list[dict[str, float]]) -> dict[str, flo
     }
 
 
-def load_param_space(path: str | None) -> dict[str, list]:
+def load_param_space(path: str | None, preset: str) -> dict[str, list]:
+    if preset not in PRESET_SPACES:
+        raise ValueError(f"Unknown preset '{preset}'. Available: {sorted(PRESET_SPACES.keys())}")
+
     if path is None:
-        return dict(DEFAULT_PARAM_SPACE)
+        return dict(PRESET_SPACES[preset])
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
     if not isinstance(data, dict) or not data:
@@ -282,15 +312,24 @@ def main() -> None:
         description="Sweep important parameters of classic_pipeline.py on classic_dataset Easy+Hard."
     )
     parser.add_argument(
+        "--preset",
+        choices=sorted(PRESET_SPACES.keys()),
+        default="combo27_refine",
+        help=(
+            "Search preset. 'combo27_refine' is a focused follow-up around combo_0027. "
+            "Use 'default' for broad search."
+        ),
+    )
+    parser.add_argument(
         "--dataset-root",
-        default=os.path.join("dataset", "classic_dataset"),
+        default=os.path.join(PROJECT_ROOT, "dataset", "classic_dataset"),
         help="Root folder containing Easy/Hard subfolders.",
     )
     parser.add_argument("--easy-subdir", default="Easy", help="Easy split subfolder name.")
     parser.add_argument("--hard-subdir", default="Hard", help="Hard split subfolder name.")
     parser.add_argument(
         "--output-root",
-        default=os.path.join("output", "classic_param_sweep"),
+        default=os.path.join(PROJECT_ROOT, "output", "classic_param_sweep"),
         help="Root output folder for sweep runs.",
     )
     parser.add_argument(
@@ -301,8 +340,11 @@ def main() -> None:
     parser.add_argument(
         "--max-combos",
         type=int,
-        default=80,
-        help="Number of sampled combinations to evaluate.",
+        default=None,
+        help=(
+            "Number of sampled combinations to evaluate. "
+            "Default: 36 for combo27_refine preset, else 80."
+        ),
     )
     parser.add_argument(
         "--seed",
@@ -344,6 +386,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.max_combos is None:
+        if args.preset == "combo27_refine" and args.space_json is None:
+            args.max_combos = 36
+        else:
+            args.max_combos = 80
+    if args.max_combos <= 0:
+        raise ValueError("--max-combos must be > 0")
+
     easy_dir = os.path.join(args.dataset_root, args.easy_subdir)
     hard_dir = os.path.join(args.dataset_root, args.hard_subdir)
 
@@ -362,7 +412,7 @@ def main() -> None:
 
     print(f"Selected images: Easy={len(easy_images)} Hard={len(hard_images)} Total={len(all_images)}")
 
-    param_space = load_param_space(args.space_json)
+    param_space = load_param_space(args.space_json, args.preset)
     combos = sample_combinations(param_space, max_combos=args.max_combos, seed=args.seed)
     print(f"Evaluating {len(combos)} combinations")
 

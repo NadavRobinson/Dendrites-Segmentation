@@ -12,7 +12,6 @@ print(f"Loading mask from {image_path}")
 mask = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
 height, width = mask.shape
 
-# IMPORTANT: Adjust this cutoff value to completely sever the trees from the base! # Try increasing this slightly if they are still connected
 print(f"Image dimensions: {width}x{height}, Cutoff value: {cutoff_value}")
 mask[height-cutoff_value:height, :] = 0 
 

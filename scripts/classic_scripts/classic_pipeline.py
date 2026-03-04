@@ -34,38 +34,38 @@ from utils import (
 # ---------------------------------------------------------------------------
 
 # Stage A: Pre-processing
-CLAHE_CLIP_LIMIT = 3.0
+CLAHE_CLIP_LIMIT = 2.0
 CLAHE_TILE_SIZE = 8
 
 BILATERAL_D = 9
-BILATERAL_SIGMA_COLOR = 75
-BILATERAL_SIGMA_SPACE = 75
+BILATERAL_SIGMA_COLOR = 50
+BILATERAL_SIGMA_SPACE = 50
 
 # Stage B: Segmentation
 ADAPTIVE_BLOCK_SIZE = 51
 ADAPTIVE_C = 5
 
 # Raw SEM tuning (applied when input is not mask-like)
-RAW_ADAPTIVE_BLOCK_SIZE = 51
-RAW_ADAPTIVE_C = -5
+RAW_ADAPTIVE_BLOCK_SIZE = 67
+RAW_ADAPTIVE_C = -9
 
 # Stage C: Post-processing
-EROSION_KERNEL_SIZE = 5
-EROSION_ITERATIONS = 3
+EROSION_KERNEL_SIZE = 3
+EROSION_ITERATIONS = 1
 RECON_MIN_KEEP_RATIO = 0.75
 RECON_FALLBACK_MIN_KEEP_RATIO = 0.70
 RECON_FALLBACK_KERNEL_SIZE = 3
 RECON_FALLBACK_ITERATIONS = 1
-CLOSING_KERNEL_SIZE = 5
+CLOSING_KERNEL_SIZE = 3
 MIN_COMPONENT_AREA = 50
-RAW_MIN_COMPONENT_AREA = 300
+RAW_MIN_COMPONENT_AREA = 450
 BASELINE_DETECT_MIN_ROW_RATIO = 0.90
 BASELINE_DETECT_SEARCH_START_RATIO = 0.55
 BASELINE_DETECT_MIN_RUN = 5
 SMALL_TREE_BAND_HEIGHT = 30
 
 # Stage D: Separation
-DISTANCE_THRESHOLD = 0.4  # fraction of max distance for watershed markers
+DISTANCE_THRESHOLD = 0.3  # fraction of max distance for watershed markers
 
 # Heuristic: image is considered mask-like if most pixels are near 0/255
 MASKLIKE_BIMODAL_RATIO = 0.85
@@ -835,40 +835,3 @@ def main():
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         main()
-    else:
-        # Synthetic self-test (no CLI args)
-        print("=== classic_pipeline.py — Synthetic Self-Test ===\n")
-
-        # Create a synthetic SEM-like image with dendrite-like structures
-        np.random.seed(42)
-        h, w = 512, 512
-        synth = np.random.randint(30, 80, (h, w), dtype=np.uint8)
-
-        # Draw some bright "dendrite" structures
-        cv2.line(synth, (100, 50), (100, 400), 200, 3)
-        cv2.line(synth, (100, 200), (250, 150), 190, 2)
-        cv2.line(synth, (100, 300), (200, 350), 185, 2)
-        cv2.line(synth, (300, 100), (300, 450), 210, 4)
-        cv2.line(synth, (300, 250), (400, 200), 195, 2)
-        cv2.line(synth, (300, 350), (450, 400), 180, 2)
-
-        # Add a bright "scale bar" at bottom
-        synth[460:, :] = 230
-
-        # Save synthetic image, then process it
-        project_dir = os.path.dirname(__file__)
-        test_img_path = os.path.join(project_dir, "output", "synth_dendrites.png")
-        os.makedirs(os.path.dirname(test_img_path), exist_ok=True)
-        cv2.imwrite(test_img_path, synth)
-
-        out_dir = os.path.join(project_dir, "output", "classic")
-        results = run_classic_pipeline(test_img_path, out_dir, save_intermediates=True)
-
-        print(f"\nFinal mask — non-zero pixels: {np.sum(results['mask'] > 0)}")
-        print(f"Skeleton   — non-zero pixels: {np.sum(results['skeleton'] > 0)}")
-
-        # Print stage dimensions
-        for name, img in results["intermediates"].items():
-            print(f"  {name}: shape={img.shape}, range=[{img.min()}, {img.max()}]")
-
-        print("\nAll classic pipeline tests passed.")
