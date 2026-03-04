@@ -1,1 +1,9 @@
-yolo11x-seg.pt
+*.PNG
+*.jpg
+*.jpeg
+*.tif
+*.pyc
+*.pt
+*.txt
+*.json
+*.csv

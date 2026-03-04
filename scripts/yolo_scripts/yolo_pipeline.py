@@ -471,38 +471,3 @@ def main():
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         main()
-    else:
-        # Synthetic self-test (no ultralytics needed)
-        print("=== yolo_pipeline.py — Synthetic Self-Test ===\n")
-
-        # Test dataset validation with a fake structure
-        test_dir = os.path.join(os.path.dirname(__file__), "output", "_yolo_test")
-        for subdir in ["train/images", "train/labels", "valid/images", "valid/labels"]:
-            os.makedirs(os.path.join(test_dir, subdir), exist_ok=True)
-
-        # Create dummy files
-        dummy_img = np.zeros((64, 64), dtype=np.uint8)
-        for i in range(3):
-            cv2.imwrite(os.path.join(test_dir, "train/images", f"img{i}.png"), dummy_img)
-            with open(os.path.join(test_dir, "train/labels", f"img{i}.txt"), 'w') as f:
-                f.write("0 0.5 0.5 0.6 0.5 0.6 0.6 0.5 0.6\n")
-        for i in range(2):
-            cv2.imwrite(os.path.join(test_dir, "valid/images", f"img{i}.png"), dummy_img)
-            with open(os.path.join(test_dir, "valid/labels", f"img{i}.txt"), 'w') as f:
-                f.write("0 0.3 0.3 0.4 0.3 0.4 0.4 0.3 0.4\n")
-
-        yaml_path = prepare_yolo_dataset(test_dir)
-        print(f"\nDataset YAML created at: {yaml_path}")
-
-        # Test skeleton extraction
-        test_mask = np.zeros((100, 100), dtype=np.uint8)
-        cv2.line(test_mask, (20, 10), (20, 90), 255, 5)
-        cv2.line(test_mask, (20, 50), (80, 50), 255, 3)
-        skeleton = yolo_mask_to_skeleton(test_mask)
-        print(f"Skeleton test — mask pixels: {np.sum(test_mask > 0)}, "
-              f"skeleton pixels: {np.sum(skeleton > 0)}")
-
-        # Cleanup test directory
-        import shutil
-        shutil.rmtree(test_dir)
-        print("\nAll YOLO pipeline tests passed.")

@@ -20,7 +20,14 @@ from skimage.morphology import reconstruction, skeletonize
 
 # Add project directory to path for imports
 sys.path.insert(0, os.path.dirname(__file__))
-from utils import load_image, save_image, list_images, clean_sem_image
+from utils import (
+    load_image,
+    save_image,
+    list_images,
+    clean_sem_image,
+    create_overlay,
+    create_comparison_strip,
+)
 
 # ---------------------------------------------------------------------------
 # Tunable parameters (all constants at top for easy adjustment)
@@ -695,6 +702,15 @@ def run_classic_pipeline(image_path, output_dir=None, save_intermediates=True):
     # Skeletonization
     skeleton = skeletonize_mask(separated)
 
+    # Preview strip: Source | Mask | Mask Overlay | Skeleton Overlay
+    mask_overlay = create_overlay(image, separated, color=(0, 255, 0), alpha=0.55)
+    skeleton_overlay = create_overlay(image, skeleton, color=(0, 0, 255), alpha=0.70)
+    preview = create_comparison_strip(
+        [image, separated, mask_overlay, skeleton_overlay],
+        ["Source", "Mask", "Mask Overlay", "Skeleton Overlay"],
+        height=320,
+    )
+
     # Collect all intermediates
     all_intermediates = {}
     all_intermediates.update(preprocess_ints)
@@ -708,11 +724,16 @@ def run_classic_pipeline(image_path, output_dir=None, save_intermediates=True):
         os.makedirs(img_out_dir, exist_ok=True)
         for name, img in all_intermediates.items():
             save_image(img, os.path.join(img_out_dir, f"{name}.png"))
-        print(f"  Saved {len(all_intermediates)} intermediate images to {img_out_dir}/")
+        save_image(preview, os.path.join(img_out_dir, "12_preview.png"))
+        print(
+            f"  Saved {len(all_intermediates) + 1} intermediate images to "
+            f"{img_out_dir}/"
+        )
     elif output_dir:
         os.makedirs(output_dir, exist_ok=True)
         save_image(separated, os.path.join(output_dir, f"{basename}_mask.png"))
         save_image(skeleton, os.path.join(output_dir, f"{basename}_skeleton.png"))
+        save_image(preview, os.path.join(output_dir, f"{basename}_preview.png"))
 
     results = {
         "mask": separated,
