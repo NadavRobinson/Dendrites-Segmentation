@@ -184,15 +184,44 @@ def create_overlay(image, mask, color=(0, 255, 0), alpha=0.4):
     """
     if image.ndim == 2:
         base = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    elif image.ndim == 3 and image.shape[2] == 1:
+        base = cv2.cvtColor(image[:, :, 0], cv2.COLOR_GRAY2BGR)
+    elif image.ndim == 3 and image.shape[2] == 4:
+        base = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
     else:
         base = image.copy()
 
-    overlay = base.copy()
-    mask_bool = mask > 0
-    overlay[mask_bool] = color
+    if base.ndim == 2:
+        base = cv2.cvtColor(base, cv2.COLOR_GRAY2BGR)
+    if base.ndim == 3 and base.shape[2] == 1:
+        base = np.repeat(base, 3, axis=2)
 
-    result = cv2.addWeighted(overlay, alpha, base, 1 - alpha, 0)
-    return result
+    # Accept HxW, HxWx1, or other singleton-expanded masks.
+    mask = np.asarray(mask)
+    if mask.ndim > 2:
+        mask = np.squeeze(mask)
+    if mask.ndim > 2:
+        # Last-resort fallback for unusual layouts.
+        mask = mask.reshape(mask.shape[0], mask.shape[1])
+    if mask.shape[:2] != base.shape[:2]:
+        mask = cv2.resize(
+            mask.astype(np.uint8),
+            (base.shape[1], base.shape[0]),
+            interpolation=cv2.INTER_NEAREST,
+        )
+
+    mask_u8 = np.zeros(mask.shape[:2], dtype=np.uint8)
+    mask_u8[mask > 0] = 255
+
+    color_layer = np.zeros_like(base, dtype=np.float32)
+    color_layer[:, :, 0] = float(color[0])
+    color_layer[:, :, 1] = float(color[1])
+    color_layer[:, :, 2] = float(color[2])
+
+    base_f = base.astype(np.float32)
+    alpha_map = ((mask_u8.astype(np.float32) / 255.0) * float(alpha))[:, :, None]
+    result = (1.0 - alpha_map) * base_f + alpha_map * color_layer
+    return np.clip(result, 0, 255).astype(np.uint8)
 
 
 def create_comparison_strip(images, titles, height=400):
@@ -219,6 +248,10 @@ def create_comparison_strip(images, titles, height=400):
         # Convert to color if needed
         if img.ndim == 2:
             panel = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        elif img.ndim == 3 and img.shape[2] == 1:
+            panel = cv2.cvtColor(img[:, :, 0], cv2.COLOR_GRAY2BGR)
+        elif img.ndim == 3 and img.shape[2] == 4:
+            panel = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
         else:
             panel = img.copy()
 
@@ -227,6 +260,10 @@ def create_comparison_strip(images, titles, height=400):
         scale = height / h
         new_w = int(w * scale)
         panel = cv2.resize(panel, (new_w, height))
+        if panel.ndim == 2:
+            panel = cv2.cvtColor(panel, cv2.COLOR_GRAY2BGR)
+        elif panel.ndim == 3 and panel.shape[2] == 1:
+            panel = cv2.cvtColor(panel[:, :, 0], cv2.COLOR_GRAY2BGR)
 
         # Add title bar at top
         title_bar = np.zeros((40, new_w, 3), dtype=np.uint8)

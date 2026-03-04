@@ -154,7 +154,28 @@ Typical artifacts created under `output/`:
 - `output/comparisons/` - 4-panel visuals: Source | Classic | YOLO | Skeleton
 - `output/evaluation/metrics_summary.txt` - metrics table + failure analysis
 
-## 7) Evaluation Criteria Implemented
+## 7) Build Submission Report (PDF Package)
+
+Generate a paper-style report package with:
+
+- per-image and average metrics CSV tables
+- failure-analysis CSV
+- visual success/failure analysis figures
+- `summary_report.tex` (and `summary_report.pdf` if `pdflatex` is installed)
+
+```bash
+python build_summary_report.py \
+  --images maked_dataset/Easy \
+  --gt ground_truth_masks/Easy \
+  --classic output/report_inputs/classic \
+  --yolo output/report_inputs/yolo \
+  --yolo-train output/yolo/train/dendrite_seg \
+  --out output/summary_report
+```
+
+Report outputs are saved under `output/summary_report/`.
+
+## 8) Evaluation Criteria Implemented
 
 - Dice score
 - IoU
@@ -163,7 +184,7 @@ Typical artifacts created under `output/`:
 
 These are generated via `evaluate.py` functions and called by `run_all.py` when `--gt` is provided.
 
-## 8) Suggested Submission Checklist
+## 9) Suggested Submission Checklist
 
 - Source code + comments/docstrings
 - `requirements.txt`
@@ -176,7 +197,7 @@ These are generated via `evaluate.py` functions and called by `run_all.py` when 
   - Skeleton
 - PDF report and short demo presentation/video
 
-## 9) Quick Repro (Minimal)
+## 10) Quick Repro (Minimal)
 
 ```bash
 python prepare_dataset.py

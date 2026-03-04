@@ -267,7 +267,7 @@ def generate_metrics_summary(results, output_path):
     print(summary)
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    with open(output_path, 'w') as f:
+    with open(output_path, 'w', encoding='utf-8') as f:
         f.write(summary)
     print(f"\nSummary saved to: {output_path}")
 
