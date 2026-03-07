@@ -414,47 +414,9 @@ def postprocess(mask, min_area=MIN_COMPONENT_AREA, baseline_row=None):
     )
     small_removed = zero_below_baseline(small_removed, baseline_row)
 
-    orig_area = int(np.count_nonzero(small_removed))
-    recon = morphological_reconstruction(small_removed)
-    recon = restore_band_components_from_reference(
-        recon, small_removed, baseline_row
-    )
-    recon = zero_below_baseline(recon, baseline_row)
-    recon_area = int(np.count_nonzero(recon))
-
-    if orig_area > 0:
-        keep_ratio = recon_area / float(orig_area)
-    else:
-        keep_ratio = 1.0
-
-    if keep_ratio < RECON_MIN_KEEP_RATIO:
-        recon_gentle = morphological_reconstruction(
-            small_removed,
-            kernel_size=RECON_FALLBACK_KERNEL_SIZE,
-            iterations=RECON_FALLBACK_ITERATIONS,
-        )
-        gentle_area = int(np.count_nonzero(recon_gentle))
-        gentle_keep_ratio = gentle_area / float(orig_area) if orig_area > 0 else 1.0
-
-        if gentle_keep_ratio >= RECON_FALLBACK_MIN_KEEP_RATIO:
-            recon = recon_gentle
-            recon = restore_band_components_from_reference(
-                recon, small_removed, baseline_row
-            )
-            recon = zero_below_baseline(recon, baseline_row)
-            print(
-                "  Reconstruction fallback: "
-                f"default keep_ratio={keep_ratio:.3f} < {RECON_MIN_KEEP_RATIO:.2f}; "
-                f"using gentle keep_ratio={gentle_keep_ratio:.3f}."
-            )
-        else:
-            recon = small_removed.copy()
-            print(
-                "  Reconstruction fallback: "
-                f"default keep_ratio={keep_ratio:.3f}, "
-                f"gentle keep_ratio={gentle_keep_ratio:.3f}; "
-                "using original mask."
-            )
+    # Reconstruction is intentionally skipped for now.
+    # Keep a "recon" variable for compatibility with downstream intermediates.
+    recon = small_removed.copy()
 
     closed = apply_closing(recon)
     closed = restore_band_components_from_reference(
