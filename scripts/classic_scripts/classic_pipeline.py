@@ -24,7 +24,7 @@ from utils import (
     load_image,
     save_image,
     list_images,
-    clean_sem_image,
+    remove_scale_bar,
     create_overlay,
     create_comparison_strip,
 )
@@ -41,13 +41,9 @@ BILATERAL_D = 9
 BILATERAL_SIGMA_COLOR = 50
 BILATERAL_SIGMA_SPACE = 50
 
-# Stage B: Segmentation
-ADAPTIVE_BLOCK_SIZE = 51
-ADAPTIVE_C = 5
-
-# Raw SEM tuning (applied when input is not mask-like)
-RAW_ADAPTIVE_BLOCK_SIZE = 67
-RAW_ADAPTIVE_C = -9
+# # Stage B: Segmentation
+ADAPTIVE_BLOCK_SIZE = 67
+ADAPTIVE_C = -12
 
 # Stage C: Post-processing
 EROSION_KERNEL_SIZE = 3
@@ -57,44 +53,13 @@ RECON_FALLBACK_MIN_KEEP_RATIO = 0.70
 RECON_FALLBACK_KERNEL_SIZE = 3
 RECON_FALLBACK_ITERATIONS = 1
 CLOSING_KERNEL_SIZE = 3
-MIN_COMPONENT_AREA = 50
-RAW_MIN_COMPONENT_AREA = 450
-BASELINE_DETECT_MIN_ROW_RATIO = 0.90
-BASELINE_DETECT_SEARCH_START_RATIO = 0.55
-BASELINE_DETECT_MIN_RUN = 5
+MIN_COMPONENT_AREA = 450
+BASELINE_DETECT_MIN_ROW_RATIO = 0.80
+BASELINE_DETECT_SEARCH_START_RATIO = 0.6
 SMALL_TREE_BAND_HEIGHT = 30
 
 # Stage D: Separation
 DISTANCE_THRESHOLD = 0.3  # fraction of max distance for watershed markers
-
-# Heuristic: image is considered mask-like if most pixels are near 0/255
-MASKLIKE_BIMODAL_RATIO = 0.85
-
-def _find_longest_true_run(flags):
-    """
-    Return (start_index, run_length) of the longest True run in a 1D bool array.
-    """
-    best_start = -1
-    best_len = 0
-    run_start = -1
-
-    for i, val in enumerate(flags):
-        if val and run_start < 0:
-            run_start = i
-        elif (not val) and run_start >= 0:
-            run_len = i - run_start
-            if run_len > best_len:
-                best_start = run_start
-                best_len = run_len
-            run_start = -1
-
-    if run_start >= 0:
-        run_len = len(flags) - run_start
-        if run_len > best_len:
-            best_start = run_start
-            best_len = run_len
-
-    return best_start, best_len
 
 
 def detect_baseline_row(mask):
@@ -106,16 +71,15 @@ def detect_baseline_row(mask):
 
     h = mask.shape[0]
     y_start = int(round(h * BASELINE_DETECT_SEARCH_START_RATIO))
-    y_start = max(0, min(h - 1, y_start))
+    y_start = min(h - 1, y_start)
 
     row_ratio = np.mean(mask > 0, axis=1)
     candidates = row_ratio[y_start:] >= BASELINE_DETECT_MIN_ROW_RATIO
-    run_start, run_len = _find_longest_true_run(candidates)
-
-    if run_start < 0 or run_len < BASELINE_DETECT_MIN_RUN:
+    true_idx = np.flatnonzero(candidates)
+    if true_idx.size == 0:
         return None
 
-    return y_start + run_start
+    return y_start + int(true_idx[0])
 
 
 def zero_below_baseline(mask, baseline_row):
@@ -162,15 +126,6 @@ def restore_band_components_from_reference(target_mask, reference_mask, baseline
             out[labels == i] = 255
     return out
 
-
-def is_masklike_input(image):
-    """
-    Detect quasi-binary inputs (mostly 0/255) from pre-generated masks.
-    """
-    near_zero = image <= 3
-    near_white = image >= 252
-    ratio = float(np.mean(np.logical_or(near_zero, near_white)))
-    return ratio >= MASKLIKE_BIMODAL_RATIO
 
 # ===========================================================================
 # Stage A: Pre-processing
@@ -258,14 +213,14 @@ def preprocess(image):
     intermediates : dict
         Dictionary of intermediate images for visualization.
     """
-    cleaned = clean_sem_image(image)
-    normalized = normalize_histogram(cleaned)
+    removed = remove_scale_bar(image)
+    normalized = normalize_histogram(removed)
     clahe_img = apply_clahe(normalized)
     bilateral_img = apply_bilateral_filter(clahe_img)
 
     intermediates = {
         "01_original": image,
-        "02_cleaned": cleaned,
+        "02_cleaned": removed,
         "03_normalized": normalized,
         "04_clahe": clahe_img,
         "05_bilateral": bilateral_img,
@@ -277,7 +232,7 @@ def preprocess(image):
 # Stage B: Segmentation
 # ===========================================================================
 
-def segment_adaptive(image, block_size=None, c=None):
+def segment_adaptive(image, block_size=ADAPTIVE_BLOCK_SIZE, c=ADAPTIVE_C):
     """
     Adaptive thresholding — computes a local threshold per pixel based on
     neighborhood mean. Preferred for SEM images with non-uniform illumination.
@@ -292,10 +247,6 @@ def segment_adaptive(image, block_size=None, c=None):
     mask : np.ndarray
         Binary mask (0 or 255), dtype uint8.
     """
-    if block_size is None:
-        block_size = ADAPTIVE_BLOCK_SIZE
-    if c is None:
-        c = ADAPTIVE_C
 
     # Adaptive threshold block size must be odd and >= 3
     block_size = int(block_size)
@@ -305,41 +256,12 @@ def segment_adaptive(image, block_size=None, c=None):
         block_size += 1
 
     mask = cv2.adaptiveThreshold(
-        image, 255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        block_size,
-        c
+        image, maxValue=255,
+        adaptiveMethod=cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        thresholdType=cv2.THRESH_BINARY,
+        blockSize=block_size,
+        C=c
     )
-    return mask
-
-
-def segment_otsu(image):
-    """
-    Otsu's binarization — finds the optimal global threshold minimizing
-    within-class variance. Fallback for uniformly illuminated images.
-
-    Parameters
-    ----------
-    image : np.ndarray
-        Pre-processed grayscale image (H, W).
-
-    Returns
-    -------
-    mask : np.ndarray
-        Binary mask (0 or 255), dtype uint8.
-    """
-    _, mask = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    return mask
-
-
-def segment_masklike(image):
-    """
-    Segmentation path for quasi-binary inputs:
-    keep any non-zero pixel as foreground.
-    """
-    mask = np.zeros_like(image, dtype=np.uint8)
-    mask[image > 0] = 255
     return mask
 
 
@@ -426,7 +348,7 @@ def apply_closing(mask):
     return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
 
-def remove_small_components(mask, min_area=None, baseline_row=None):
+def remove_small_components(mask, min_area=MIN_COMPONENT_AREA, baseline_row=None):
     """
     Remove connected components smaller than min_area pixels.
     Based on the physical assumption that dendrites are large,
@@ -471,9 +393,9 @@ def remove_small_components(mask, min_area=None, baseline_row=None):
     return cleaned
 
 
-def postprocess(mask, min_area=None, baseline_row=None):
+def postprocess(mask, min_area=MIN_COMPONENT_AREA, baseline_row=None):
     """
-    Full post-processing pipeline: reconstruction → closing → small component removal.
+    Full post-processing pipeline: small component removal → reconstruction → closing .
 
     Parameters
     ----------
@@ -615,7 +537,6 @@ def separate_branches(mask):
 def skeletonize_mask(mask):
     """
     Extract single-pixel-width centerline skeleton from binary mask.
-    Uses Zhang-Suen thinning algorithm via scikit-image.
 
     Parameters
     ----------
@@ -630,6 +551,25 @@ def skeletonize_mask(mask):
     binary = (mask > 0).astype(bool)
     skel = skeletonize(binary)
     return (skel.astype(np.uint8) * 255)
+
+
+def restore_mask_to_original_canvas(mask, original_image):
+    """
+    Restore cropped mask-like outputs to the original image size.
+    Missing area is filled with black.
+    """
+    if mask is None or original_image is None:
+        return mask
+    oh, ow = original_image.shape[:2]
+    mh, mw = mask.shape[:2]
+    if mh == oh and mw == ow:
+        return mask
+
+    restored = np.zeros((oh, ow), dtype=mask.dtype)
+    copy_h = min(mh, oh)
+    copy_w = min(mw, ow)
+    restored[:copy_h, :copy_w] = mask[:copy_h, :copy_w]
+    return restored
 
 
 # ===========================================================================
@@ -667,20 +607,13 @@ def run_classic_pipeline(image_path, output_dir=None, save_intermediates=True):
     preprocessed, preprocess_ints = preprocess(image)
 
     # Stage B: Segmentation
-    # For quasi-binary images (maked_dataset), keep non-zero foreground.
-    # For raw SEM images, use adaptive thresholding.
-    masklike_mode = is_masklike_input(image)
-    if masklike_mode:
-        seg_mask = segment_masklike(image)
-        min_area = MIN_COMPONENT_AREA
-    else:
-        seg_mask = segment_adaptive(
-            preprocessed,
-            block_size=RAW_ADAPTIVE_BLOCK_SIZE,
-            c=RAW_ADAPTIVE_C,
-        )
-        min_area = RAW_MIN_COMPONENT_AREA
+    seg_mask = segment_adaptive(
+        preprocessed,
+        block_size=ADAPTIVE_BLOCK_SIZE,
+        c=ADAPTIVE_C,
+    )
     preprocess_ints["06_segmented"] = seg_mask
+
     baseline_row = detect_baseline_row(seg_mask)
     if baseline_row is not None:
         print(f"  Baseline detected at row={baseline_row}")
@@ -689,18 +622,19 @@ def run_classic_pipeline(image_path, output_dir=None, save_intermediates=True):
 
     # Stage C: Post-processing
     clean_mask, postprocess_ints = postprocess(
-        seg_mask, min_area=min_area, baseline_row=baseline_row
+        seg_mask, min_area=MIN_COMPONENT_AREA, baseline_row=baseline_row
     )
     clean_mask = zero_below_baseline(clean_mask, baseline_row)
 
     # Stage D: Separation
-    if masklike_mode:
-        separated = clean_mask.copy()
-    else:
-        separated = separate_branches(clean_mask)
+    separated = separate_branches(clean_mask)
 
     # Skeletonization
     skeleton = skeletonize_mask(separated)
+
+    # Restore final mask outputs to original size for preview alignment.
+    separated = restore_mask_to_original_canvas(separated, image)
+    skeleton = restore_mask_to_original_canvas(skeleton, image)
 
     # Preview strip: Source | Mask | Mask Overlay | Skeleton Overlay
     mask_overlay = create_overlay(image, separated, color=(0, 255, 0), alpha=0.55)
@@ -785,53 +719,47 @@ def process_all_images(input_dir, output_dir):
 # CLI entry point
 # ===========================================================================
 
-def main():
-    """Argparse CLI for the classic segmentation pipeline."""
-    parser = argparse.ArgumentParser(
-        description="Classic CV pipeline for SEM dendrite segmentation"
-    )
-    parser.add_argument(
-        "image", nargs="?", default=None,
-        help="Path to a single SEM image (omit for batch mode with --input)"
-    )
-    parser.add_argument(
-        "--input", default=None,
-        help="Directory of SEM images for batch processing"
-    )
-    parser.add_argument(
-        "--output", default=None,
-        help="Output directory (default: output/classic/)"
-    )
-    parser.add_argument(
-        "--no-intermediates", action="store_true",
-        help="Only save final mask and skeleton, not intermediate stages"
-    )
+"""Argparse CLI for the classic segmentation pipeline."""
+parser = argparse.ArgumentParser(
+    description="Classic CV pipeline for SEM dendrite segmentation"
+)
+parser.add_argument(
+    "image", nargs="?", default=None,
+    help="Path to a single SEM image (omit for batch mode with --input)"
+)
+parser.add_argument(
+    "--input", default=None,
+    help="Directory of SEM images for batch processing"
+)
+parser.add_argument(
+    "--output", default=None,
+    help="Output directory (default: output/classic/)"
+)
+parser.add_argument(
+    "--no-intermediates", action="store_true",
+    help="Only save final mask and skeleton, not intermediate stages"
+)
 
-    args = parser.parse_args()
+args = parser.parse_args()
 
-    project_dir = os.path.dirname(os.path.abspath(__file__))
-    output_dir = args.output or os.path.join(project_dir, "output", "classic")
+project_dir = os.path.dirname(os.path.abspath(__file__))
+output_dir = args.output or os.path.join(project_dir, "output", "classic")
 
-    if args.image:
-        # Single image mode
-        if not os.path.isfile(args.image):
-            print(f"Error: Image not found: {args.image}")
-            sys.exit(1)
-        run_classic_pipeline(
-            args.image, output_dir,
-            save_intermediates=not args.no_intermediates
-        )
-    elif args.input:
-        # Batch mode
-        if not os.path.isdir(args.input):
-            print(f"Error: Directory not found: {args.input}")
-            sys.exit(1)
-        process_all_images(args.input, output_dir)
-    else:
-        parser.print_help()
+if args.image:
+    # Single image mode
+    if not os.path.isfile(args.image):
+        print(f"Error: Image not found: {args.image}")
         sys.exit(1)
-
-
-if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        main()
+    run_classic_pipeline(
+        args.image, output_dir,
+        save_intermediates=not args.no_intermediates
+    )
+elif args.input:
+    # Batch mode
+    if not os.path.isdir(args.input):
+        print(f"Error: Directory not found: {args.input}")
+        sys.exit(1)
+    process_all_images(args.input, output_dir)
+else:
+    parser.print_help()
+    sys.exit(1)

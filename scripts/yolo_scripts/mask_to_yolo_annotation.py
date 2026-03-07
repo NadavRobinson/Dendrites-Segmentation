@@ -1,42 +1,112 @@
+import argparse
+import os
+from pathlib import Path
+
 import cv2
 import numpy as np
 
-cutoff_value = 120
 
-# 1. Load your binary mask
-file = 'easy_2'
-inout_folder = 'maked_dataset/Easy/'
-output_folder = 'annotations/Easy/'
-image_path = f'{inout_folder}{file}.jpg'
-print(f"Loading mask from {image_path}")
-mask = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-height, width = mask.shape
+def mask_to_yolo_lines(mask: np.ndarray, min_area: int, class_id: int) -> list[str]:
+    height, width = mask.shape
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
-print(f"Image dimensions: {width}x{height}, Cutoff value: {cutoff_value}")
-mask[height-cutoff_value:height, :] = 0 
-
-# 2. Find contours using CHAIN_APPROX_NONE for maximum detail
-# This captures EVERY boundary pixel, creating a very dense, accurate polygon
-contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-
-class_id = 0 
-
-# 3. Write to a YOLO formatted text file
-with open(f'{output_folder}{file}.txt', 'w') as f:
+    lines: list[str] = []
     for contour in contours:
-        # Filter out tiny white specks/noise 
-        if cv2.contourArea(contour) < 50:
+        if cv2.contourArea(contour) < min_area:
             continue
-            
-        # Normalize coordinates between 0.0 and 1.0
+
         normalized_coords = []
         for point in contour:
             x = point[0][0] / width
             y = point[0][1] / height
             normalized_coords.extend([f"{x:.6f}", f"{y:.6f}"])
-            
-        # Format the line and write to file
-        yolo_line = f"{class_id} " + " ".join(normalized_coords) + "\n"
-        f.write(yolo_line)
 
-print("Strict YOLO annotation file generated successfully!")
+        if normalized_coords:
+            lines.append(f"{class_id} " + " ".join(normalized_coords))
+
+    return lines
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Convert pipeline mask PNGs to YOLO segmentation annotation TXT files."
+    )
+    parser.add_argument(
+        "--input-root",
+        required=True,
+        help="Root directory containing per-image subfolders (e.g. output/hard_moved_smallremoved).",
+    )
+    parser.add_argument(
+        "--mask-name",
+        required=True,
+        help="Mask filename inside each subfolder (e.g. 10_separated.png or 11_skeleton.png).",
+    )
+    parser.add_argument(
+        "--output-folder",
+        required=True,
+        help="Directory where YOLO .txt files will be written.",
+    )
+    parser.add_argument(
+        "--cutoff-value",
+        type=int,
+        default=120,
+        help="Zero out the last N rows from the bottom before contour extraction.",
+    )
+    parser.add_argument(
+        "--min-area",
+        type=int,
+        default=50,
+        help="Minimum contour area to keep.",
+    )
+    parser.add_argument(
+        "--class-id",
+        type=int,
+        default=0,
+        help="YOLO class id.",
+    )
+
+    args = parser.parse_args()
+
+    input_root = Path(args.input_root)
+    output_folder = Path(args.output_folder)
+    output_folder.mkdir(parents=True, exist_ok=True)
+
+    if not input_root.is_dir():
+        raise FileNotFoundError(f"Input root not found: {input_root}")
+
+    subdirs = sorted([p for p in input_root.iterdir() if p.is_dir()])
+    written = 0
+    skipped = 0
+
+    for subdir in subdirs:
+        mask_path = subdir / args.mask_name
+        if not mask_path.is_file():
+            skipped += 1
+            continue
+
+        mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            print(f"Skipping unreadable mask: {mask_path}")
+            skipped += 1
+            continue
+
+        height = mask.shape[0]
+        cutoff = max(0, min(args.cutoff_value, height))
+        if cutoff > 0:
+            mask[height - cutoff : height, :] = 0
+
+        lines = mask_to_yolo_lines(mask, min_area=args.min_area, class_id=args.class_id)
+        txt_path = output_folder / f"{subdir.name}.txt"
+        with open(txt_path, "w", encoding="utf-8") as f:
+            if lines:
+                f.write("\n".join(lines) + "\n")
+        written += 1
+
+    print(
+        f"Done. Wrote {written} annotation files to {output_folder}. "
+        f"Skipped {skipped} subfolders."
+    )
+
+
+if __name__ == "__main__":
+    main()

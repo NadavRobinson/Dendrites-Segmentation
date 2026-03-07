@@ -11,7 +11,7 @@ import os
 IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp')
 
 # Scale bar region — bottom fraction of SEM image containing instrument metadata
-SCALE_BAR_FRACTION = 0.12
+SCALE_BAR_FRACTION = 0.06398537477148080438756855575868
 
 
 def load_image(path, grayscale=True):
@@ -78,7 +78,7 @@ def list_images(directory):
 def remove_scale_bar(image):
     """
     Mask the bottom region of an SEM image (instrument metadata / scale bar).
-    Replaces the region with the median intensity of the area just above it.
+    Crops out the bottom region.
 
     Parameters
     ----------
@@ -88,78 +88,14 @@ def remove_scale_bar(image):
     Returns
     -------
     cleaned : np.ndarray
-        Image with bottom metadata region replaced.
+        Image with bottom metadata region removed.
     """
     h, w = image.shape[:2]
     cutoff = int(h * (1 - SCALE_BAR_FRACTION))
 
-    # Compute fill value from the strip just above the metadata region
-    ref_strip = image[max(0, cutoff - 20):cutoff, :]
-    fill_value = int(np.median(ref_strip))
-
     cleaned = image.copy()
-    cleaned[cutoff:, :] = fill_value
-    return cleaned
-
-
-def remove_text_overlay(image):
-    """
-    Detect and inpaint bright text overlays on SEM images.
-    Uses thresholding to find very bright pixels (text/annotations),
-    filters small connected components, and inpaints them.
-
-    Parameters
-    ----------
-    image : np.ndarray
-        Grayscale SEM image (H, W).
-
-    Returns
-    -------
-    cleaned : np.ndarray
-        Image with text overlays inpainted.
-    """
-    # Bright text is typically near-white on SEM images
-    thresh = int(np.percentile(image, 99.5))
-    text_mask = (image >= thresh).astype(np.uint8) * 255
-
-    # Dilate slightly to cover text edges
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    text_mask = cv2.dilate(text_mask, kernel, iterations=1)
-
-    # Keep only small connected components (text characters, not large bright regions)
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(text_mask, connectivity=8)
-    filtered_mask = np.zeros_like(text_mask)
-    for i in range(1, num_labels):
-        area = stats[i, cv2.CC_STAT_AREA]
-        # Text components are small (< 2000 px) but not tiny noise (> 5 px)
-        if 5 < area < 2000:
-            filtered_mask[labels == i] = 255
-
-    if np.sum(filtered_mask) == 0:
-        return image
-
-    # Inpaint the detected text regions
-    cleaned = cv2.inpaint(image, filtered_mask, inpaintRadius=5, flags=cv2.INPAINT_TELEA)
-    return cleaned
-
-
-def clean_sem_image(image):
-    """
-    Full SEM image cleaning: remove scale bar then text overlays.
-
-    Parameters
-    ----------
-    image : np.ndarray
-        Grayscale SEM image (H, W).
-
-    Returns
-    -------
-    cleaned : np.ndarray
-        Cleaned image.
-    """
-    cleaned = remove_scale_bar(image)
-    cleaned = remove_text_overlay(cleaned)
-    return cleaned
+    cleaned_cutoff = cleaned[:cutoff, :]
+    return cleaned_cutoff
 
 
 def create_overlay(image, mask, color=(0, 255, 0), alpha=0.4):
