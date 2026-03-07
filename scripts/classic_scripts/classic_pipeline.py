@@ -414,14 +414,21 @@ def postprocess(mask, min_area=MIN_COMPONENT_AREA, baseline_row=None):
     )
     small_removed = zero_below_baseline(small_removed, baseline_row)
 
-    # Reconstruction is intentionally skipped for now.
-    # Keep a "recon" variable for compatibility with downstream intermediates.
+    # Reconstruction is intentionally skipped.
+    # recon = morphological_reconstruction(small_removed)
+    # recon = restore_band_components_from_reference(
+    #     recon, small_removed, baseline_row
+    # )
+    # recon = zero_below_baseline(recon, baseline_row)
     recon = small_removed.copy()
 
-    closed = apply_closing(recon)
-    closed = restore_band_components_from_reference(
-        closed, small_removed, baseline_row
-    )
+    # Closing is intentionally skipped.
+    # closed = apply_closing(recon)
+    # closed = restore_band_components_from_reference(
+    #     closed, small_removed, baseline_row
+    # )
+    # closed = zero_below_baseline(closed, baseline_row)
+    closed = recon.copy()
     closed = zero_below_baseline(closed, baseline_row)
 
     intermediates = {
