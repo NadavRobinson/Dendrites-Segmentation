@@ -48,83 +48,64 @@ ADAPTIVE_C = -12
 # Stage C: Post-processing
 EROSION_KERNEL_SIZE = 3
 EROSION_ITERATIONS = 1
-RECON_MIN_KEEP_RATIO = 0.75
-RECON_FALLBACK_MIN_KEEP_RATIO = 0.70
-RECON_FALLBACK_KERNEL_SIZE = 3
-RECON_FALLBACK_ITERATIONS = 1
 CLOSING_KERNEL_SIZE = 3
-MIN_COMPONENT_AREA = 450
-BASELINE_DETECT_MIN_ROW_RATIO = 0.80
-BASELINE_DETECT_SEARCH_START_RATIO = 0.6
-SMALL_TREE_BAND_HEIGHT = 30
+MIN_COMPONENT_AREA = 250
 
 # Stage D: Separation
 DISTANCE_THRESHOLD = 0.3  # fraction of max distance for watershed markers
 
+# Parameter profiles (edit EASY_PARAMS/HARD_PARAMS independently as needed)
+DEFAULT_PARAMS = {
+    "CLAHE_CLIP_LIMIT": 2.0,
+    "CLAHE_TILE_SIZE": 8,
+    "BILATERAL_D": 9,
+    "BILATERAL_SIGMA_COLOR": 50,
+    "BILATERAL_SIGMA_SPACE": 50,
+    "ADAPTIVE_BLOCK_SIZE": 67,
+    "ADAPTIVE_C": -12,
+    "EROSION_KERNEL_SIZE": 3,
+    "EROSION_ITERATIONS": 1,
+    "CLOSING_KERNEL_SIZE": 3,
+    "MIN_COMPONENT_AREA": 250,
+    "DISTANCE_THRESHOLD": 0.07,
+}
+EASY_PARAMS = DEFAULT_PARAMS.copy()
+HARD_PARAMS = DEFAULT_PARAMS.copy()
+EASY_PARAMS.update({
+    "MIN_COMPONENT_AREA": 250,
+})
 
-def detect_baseline_row(mask):
+PARAMETER_PROFILES = {
+    "default": DEFAULT_PARAMS,
+    "easy": EASY_PARAMS,
+    "hard": HARD_PARAMS,
+}
+
+
+def apply_parameter_profile(profile_name):
     """
-    Detect baseline row (horizontal bright strip under the forest) in a mask.
+    Apply a named parameter profile by updating global constants.
     """
-    if mask is None or mask.ndim != 2 or mask.size == 0:
-        return None
+    profile = PARAMETER_PROFILES[profile_name]
 
-    h = mask.shape[0]
-    y_start = int(round(h * BASELINE_DETECT_SEARCH_START_RATIO))
-    y_start = min(h - 1, y_start)
+    global CLAHE_CLIP_LIMIT, CLAHE_TILE_SIZE
+    global BILATERAL_D, BILATERAL_SIGMA_COLOR, BILATERAL_SIGMA_SPACE
+    global ADAPTIVE_BLOCK_SIZE, ADAPTIVE_C
+    global EROSION_KERNEL_SIZE, EROSION_ITERATIONS
+    global CLOSING_KERNEL_SIZE, MIN_COMPONENT_AREA, DISTANCE_THRESHOLD
 
-    row_ratio = np.mean(mask > 0, axis=1)
-    candidates = row_ratio[y_start:] >= BASELINE_DETECT_MIN_ROW_RATIO
-    true_idx = np.flatnonzero(candidates)
-    if true_idx.size == 0:
-        return None
-
-    return y_start + int(true_idx[0])
-
-
-def zero_below_baseline(mask, baseline_row):
-    """
-    Set baseline row and everything below it to zero.
-    """
-    if baseline_row is None:
-        return mask
-    h = mask.shape[0]
-    y0 = max(0, min(h, int(baseline_row)))
-    out = mask.copy()
-    out[y0:h, :] = 0
-    return out
-
-
-def restore_band_components_from_reference(target_mask, reference_mask, baseline_row, band_height=None):
-    """
-    Restore connected components from reference_mask whose bottom lies in the
-    baseline band into target_mask.
-    """
-    if (
-        baseline_row is None
-        or target_mask is None
-        or reference_mask is None
-        or target_mask.shape != reference_mask.shape
-    ):
-        return target_mask
-
-    if band_height is None:
-        band_height = SMALL_TREE_BAND_HEIGHT
-
-    band_top = max(0, int(baseline_row) - int(band_height))
-    band_bottom = int(baseline_row)
-
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
-        reference_mask, connectivity=8
-    )
-    out = target_mask.copy()
-    for i in range(1, num_labels):
-        top = int(stats[i, cv2.CC_STAT_TOP])
-        height = int(stats[i, cv2.CC_STAT_HEIGHT])
-        bottom = top + height - 1
-        if band_top <= bottom <= band_bottom and top <= band_bottom:
-            out[labels == i] = 255
-    return out
+    CLAHE_CLIP_LIMIT = profile["CLAHE_CLIP_LIMIT"]
+    CLAHE_TILE_SIZE = profile["CLAHE_TILE_SIZE"]
+    BILATERAL_D = profile["BILATERAL_D"]
+    BILATERAL_SIGMA_COLOR = profile["BILATERAL_SIGMA_COLOR"]
+    BILATERAL_SIGMA_SPACE = profile["BILATERAL_SIGMA_SPACE"]
+    ADAPTIVE_BLOCK_SIZE = profile["ADAPTIVE_BLOCK_SIZE"]
+    ADAPTIVE_C = profile["ADAPTIVE_C"]
+    EROSION_KERNEL_SIZE = profile["EROSION_KERNEL_SIZE"]
+    EROSION_ITERATIONS = profile["EROSION_ITERATIONS"]
+    CLOSING_KERNEL_SIZE = profile["CLOSING_KERNEL_SIZE"]
+    MIN_COMPONENT_AREA = profile["MIN_COMPONENT_AREA"]
+    DISTANCE_THRESHOLD = profile["DISTANCE_THRESHOLD"]
 
 
 # ===========================================================================
@@ -348,7 +329,7 @@ def apply_closing(mask):
     return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
 
-def remove_small_components(mask, min_area=MIN_COMPONENT_AREA, baseline_row=None):
+def remove_small_components(mask, min_area=MIN_COMPONENT_AREA):
     """
     Remove connected components smaller than min_area pixels.
     Based on the physical assumption that dendrites are large,
@@ -360,10 +341,6 @@ def remove_small_components(mask, min_area=MIN_COMPONENT_AREA, baseline_row=None
         Binary mask (0 or 255), dtype uint8.
     min_area : int or None
         Minimum component area in pixels. Uses MIN_COMPONENT_AREA if None.
-    baseline_row : int or None
-        If provided, preserve any component whose bottom lies in the
-        50-pixel band directly above the baseline.
-
     Returns
     -------
     cleaned : np.ndarray
@@ -378,22 +355,12 @@ def remove_small_components(mask, min_area=MIN_COMPONENT_AREA, baseline_row=None
     cleaned = np.zeros_like(mask)
     for i in range(1, num_labels):
         area = int(stats[i, cv2.CC_STAT_AREA])
-        top = int(stats[i, cv2.CC_STAT_TOP])
-        height = int(stats[i, cv2.CC_STAT_HEIGHT])
-        bottom = top + height - 1
-        if baseline_row is not None:
-            band_top = max(0, int(baseline_row) - SMALL_TREE_BAND_HEIGHT)
-            band_bottom = int(baseline_row)
-            if band_top <= bottom <= band_bottom and top <= band_bottom:
-                cleaned[labels == i] = 255
-                continue
-
         if area >= min_area:
             cleaned[labels == i] = 255
     return cleaned
 
 
-def postprocess(mask, min_area=MIN_COMPONENT_AREA, baseline_row=None):
+def postprocess(mask, min_area=MIN_COMPONENT_AREA):
     """
     Full post-processing pipeline: reconstruction -> closing -> small component removal.
 
@@ -410,21 +377,10 @@ def postprocess(mask, min_area=MIN_COMPONENT_AREA, baseline_row=None):
         Dictionary of intermediate masks.
     """
     recon = morphological_reconstruction(mask)
-    recon = restore_band_components_from_reference(
-        recon, mask, baseline_row
-    )
-    recon = zero_below_baseline(recon, baseline_row)
 
     closed = apply_closing(recon)
-    closed = restore_band_components_from_reference(
-        closed, recon, baseline_row
-    )
-    closed = zero_below_baseline(closed, baseline_row)
 
-    small_removed = remove_small_components(
-        closed, min_area=min_area, baseline_row=baseline_row
-    )
-    small_removed = zero_below_baseline(small_removed, baseline_row)
+    small_removed = remove_small_components(closed, min_area=min_area)
 
     intermediates = {
         "07_reconstructed": recon,
@@ -577,17 +533,8 @@ def run_classic_pipeline(image_path, output_dir=None, save_intermediates=True):
     )
     preprocess_ints["06_segmented"] = seg_mask
 
-    baseline_row = detect_baseline_row(seg_mask)
-    if baseline_row is not None:
-        print(f"  Baseline detected at row={baseline_row}")
-    seg_mask = zero_below_baseline(seg_mask, baseline_row)
-    preprocess_ints["06b_baseline_cut"] = seg_mask
-
     # Stage C: Post-processing
-    clean_mask, postprocess_ints = postprocess(
-        seg_mask, min_area=MIN_COMPONENT_AREA, baseline_row=baseline_row
-    )
-    clean_mask = zero_below_baseline(clean_mask, baseline_row)
+    clean_mask, postprocess_ints = postprocess(seg_mask, min_area=MIN_COMPONENT_AREA)
 
     # Stage D: Separation
     separated = separate_branches(clean_mask)
@@ -641,7 +588,7 @@ def run_classic_pipeline(image_path, output_dir=None, save_intermediates=True):
     return results
 
 
-def process_all_images(input_dir, output_dir):
+def process_all_images(input_dir, output_dir, save_intermediates=True):
     """
     Batch-process all SEM images in a directory through the classic pipeline.
 
@@ -651,6 +598,8 @@ def process_all_images(input_dir, output_dir):
         Directory containing input SEM images.
     output_dir : str
         Directory to save all outputs.
+    save_intermediates : bool
+        If True, save all intermediate pipeline stages.
 
     Returns
     -------
@@ -668,7 +617,7 @@ def process_all_images(input_dir, output_dir):
         results = run_classic_pipeline(
             path,
             output_dir,
-            save_intermediates=True,
+            save_intermediates=save_intermediates,
         )
         basename = os.path.splitext(os.path.basename(path))[0]
         all_results[basename] = results
@@ -696,17 +645,53 @@ parser.add_argument(
 )
 parser.add_argument(
     "--output", default=None,
-    help="Output directory (default: output/classic/)"
+    help=(
+        "Output directory. If omitted, defaults to output/easy with --easy, "
+        "output/hard with --hard, otherwise output/classic."
+    )
 )
 parser.add_argument(
     "--no-intermediates", action="store_true",
     help="Only save final mask and skeleton, not intermediate stages"
 )
+profile_group = parser.add_mutually_exclusive_group()
+profile_group.add_argument(
+    "--easy", action="store_true",
+    help=(
+        "Use EASY parameter profile. In batch mode without --input, defaults "
+        "to dataset/Easy and output/easy."
+    )
+)
+profile_group.add_argument(
+    "--hard", action="store_true",
+    help=(
+        "Use HARD parameter profile. In batch mode without --input, defaults "
+        "to dataset/Hard and output/hard."
+    )
+)
 
 args = parser.parse_args()
 
-project_dir = os.path.dirname(os.path.abspath(__file__))
-output_dir = args.output or os.path.join(project_dir, "output", "classic")
+script_dir = os.path.dirname(os.path.abspath(__file__))
+repo_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
+
+if args.easy:
+    selected_profile = "easy"
+elif args.hard:
+    selected_profile = "hard"
+else:
+    selected_profile = "default"
+apply_parameter_profile(selected_profile)
+print(f"Using parameter profile: {selected_profile}")
+
+if args.output:
+    output_dir = args.output
+elif selected_profile == "easy":
+    output_dir = os.path.join(repo_root, "output", "easy")
+elif selected_profile == "hard":
+    output_dir = os.path.join(repo_root, "output", "hard")
+else:
+    output_dir = os.path.join(repo_root, "output", "classic")
 
 if args.image:
     # Single image mode
@@ -717,12 +702,23 @@ if args.image:
         args.image, output_dir,
         save_intermediates=not args.no_intermediates
     )
-elif args.input:
-    # Batch mode
-    if not os.path.isdir(args.input):
-        print(f"Error: Directory not found: {args.input}")
-        sys.exit(1)
-    process_all_images(args.input, output_dir)
 else:
-    parser.print_help()
-    sys.exit(1)
+    input_dir = args.input
+    if input_dir is None and selected_profile == "easy":
+        input_dir = os.path.join(repo_root, "dataset", "Easy")
+    elif input_dir is None and selected_profile == "hard":
+        input_dir = os.path.join(repo_root, "dataset", "Hard")
+
+    if not input_dir:
+        parser.print_help()
+        sys.exit(1)
+
+    # Batch mode
+    if not os.path.isdir(input_dir):
+        print(f"Error: Directory not found: {input_dir}")
+        sys.exit(1)
+    process_all_images(
+        input_dir,
+        output_dir,
+        save_intermediates=not args.no_intermediates,
+    )
