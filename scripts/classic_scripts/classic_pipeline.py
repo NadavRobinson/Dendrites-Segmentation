@@ -34,7 +34,7 @@ from utils import (
 # ---------------------------------------------------------------------------
 
 # Stage A: Pre-processing
-CLAHE_CLIP_LIMIT = 2.0
+CLAHE_CLIP_LIMIT = 1
 CLAHE_TILE_SIZE = 8
 
 BILATERAL_D = 9
@@ -56,7 +56,7 @@ DISTANCE_THRESHOLD = 0.3  # fraction of max distance for watershed markers
 
 # Parameter profiles (edit EASY_PARAMS/HARD_PARAMS independently as needed)
 DEFAULT_PARAMS = {
-    "CLAHE_CLIP_LIMIT": 2.0,
+    "CLAHE_CLIP_LIMIT": 1.0,
     "CLAHE_TILE_SIZE": 8,
     "BILATERAL_D": 9,
     "BILATERAL_SIGMA_COLOR": 50,
