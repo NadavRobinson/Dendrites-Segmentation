@@ -395,7 +395,7 @@ def remove_small_components(mask, min_area=MIN_COMPONENT_AREA, baseline_row=None
 
 def postprocess(mask, min_area=MIN_COMPONENT_AREA, baseline_row=None):
     """
-    Full post-processing pipeline: small component removal → reconstruction → closing .
+    Full post-processing pipeline: reconstruction -> closing -> small component removal.
 
     Parameters
     ----------
@@ -409,35 +409,29 @@ def postprocess(mask, min_area=MIN_COMPONENT_AREA, baseline_row=None):
     intermediates : dict
         Dictionary of intermediate masks.
     """
+    recon = morphological_reconstruction(mask)
+    recon = restore_band_components_from_reference(
+        recon, mask, baseline_row
+    )
+    recon = zero_below_baseline(recon, baseline_row)
+
+    closed = apply_closing(recon)
+    closed = restore_band_components_from_reference(
+        closed, recon, baseline_row
+    )
+    closed = zero_below_baseline(closed, baseline_row)
+
     small_removed = remove_small_components(
-        mask, min_area=min_area, baseline_row=baseline_row
+        closed, min_area=min_area, baseline_row=baseline_row
     )
     small_removed = zero_below_baseline(small_removed, baseline_row)
 
-    # Reconstruction is intentionally skipped.
-    # recon = morphological_reconstruction(small_removed)
-    # recon = restore_band_components_from_reference(
-    #     recon, small_removed, baseline_row
-    # )
-    # recon = zero_below_baseline(recon, baseline_row)
-    recon = small_removed.copy()
-
-    # Closing is intentionally skipped.
-    # closed = apply_closing(recon)
-    # closed = restore_band_components_from_reference(
-    #     closed, small_removed, baseline_row
-    # )
-    # closed = zero_below_baseline(closed, baseline_row)
-    closed = recon.copy()
-    closed = zero_below_baseline(closed, baseline_row)
-
     intermediates = {
-        "07_small_removed": small_removed,
-        "08_reconstructed": recon,
-        "09_closed": closed,
+        "07_reconstructed": recon,
+        "08_closed": closed,
+        "09_small_removed": small_removed,
     }
-    return closed, intermediates
-
+    return small_removed, intermediates
 
 # ===========================================================================
 # Stage D: Separation (Distance Transform + Watershed)
