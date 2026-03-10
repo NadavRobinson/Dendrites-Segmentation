@@ -50,6 +50,9 @@ EROSION_KERNEL_SIZE = 5
 EROSION_ITERATIONS = 1
 CLOSING_KERNEL_SIZE = 3
 MIN_COMPONENT_AREA = 250
+COMPONENT_PROXIMITY_RADIUS = 30
+COMPONENT_PROXIMITY_RATIO = 0.1
+RUN_SMALL_REMOVAL = False
 
 # Stage D: Separation
 DISTANCE_THRESHOLD = 0.3  # fraction of max distance for watershed markers
@@ -68,13 +71,24 @@ DEFAULT_PARAMS = {
     "CLOSING_KERNEL_SIZE": 3,
     "MIN_COMPONENT_AREA": 250,
     "DISTANCE_THRESHOLD": 0.07,
+    "COMPONENT_PROXIMITY_RADIUS": 30,
+    "COMPONENT_PROXIMITY_RATIO": 0.1,
+    "RUN_SMALL_REMOVAL": False,
 }
 EASY_PARAMS = DEFAULT_PARAMS.copy()
 HARD_PARAMS = DEFAULT_PARAMS.copy()
 EASY_PARAMS.update({
-    "MIN_COMPONENT_AREA": 75,
+    "MIN_COMPONENT_AREA": 250,
     "EROSION_KERNEL_SIZE": 5,
     "EROSION_ITERATIONS": 1,
+    "COMPONENT_PROXIMITY_RADIUS": 20,
+    "COMPONENT_PROXIMITY_RATIO": 0.05,
+    "RUN_SMALL_REMOVAL": False,
+})
+HARD_PARAMS.update({
+    "RUN_SMALL_REMOVAL": True,
+    "COMPONENT_PROXIMITY_RADIUS": 30,
+    "COMPONENT_PROXIMITY_RATIO": 0.3,
 })
 
 PARAMETER_PROFILES = {
@@ -95,6 +109,8 @@ def apply_parameter_profile(profile_name):
     global ADAPTIVE_BLOCK_SIZE, ADAPTIVE_C
     global EROSION_KERNEL_SIZE, EROSION_ITERATIONS
     global CLOSING_KERNEL_SIZE, MIN_COMPONENT_AREA, DISTANCE_THRESHOLD
+    global COMPONENT_PROXIMITY_RADIUS, COMPONENT_PROXIMITY_RATIO
+    global RUN_SMALL_REMOVAL
 
     CLAHE_CLIP_LIMIT = profile["CLAHE_CLIP_LIMIT"]
     CLAHE_TILE_SIZE = profile["CLAHE_TILE_SIZE"]
@@ -108,6 +124,9 @@ def apply_parameter_profile(profile_name):
     CLOSING_KERNEL_SIZE = profile["CLOSING_KERNEL_SIZE"]
     MIN_COMPONENT_AREA = profile["MIN_COMPONENT_AREA"]
     DISTANCE_THRESHOLD = profile["DISTANCE_THRESHOLD"]
+    COMPONENT_PROXIMITY_RADIUS = profile["COMPONENT_PROXIMITY_RADIUS"]
+    COMPONENT_PROXIMITY_RATIO = profile["COMPONENT_PROXIMITY_RATIO"]
+    RUN_SMALL_REMOVAL = profile["RUN_SMALL_REMOVAL"]
 
 
 # ===========================================================================
@@ -331,11 +350,13 @@ def apply_closing(mask):
     return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
 
-def remove_small_components(mask, min_area=MIN_COMPONENT_AREA):
+def remove_small_components(mask, min_area=MIN_COMPONENT_AREA,
+                            proximity_radius=None, proximity_ratio=None):
     """
-    Remove connected components smaller than min_area pixels.
+    Remove connected components smaller than min_area pixels,
+    UNLESS they are close to other components (potential small branches).
     Based on the physical assumption that dendrites are large,
-    continuous structures.
+    continuous structures or small branches near larger ones.
 
     Parameters
     ----------
@@ -343,26 +364,62 @@ def remove_small_components(mask, min_area=MIN_COMPONENT_AREA):
         Binary mask (0 or 255), dtype uint8.
     min_area : int or None
         Minimum component area in pixels. Uses MIN_COMPONENT_AREA if None.
+    proximity_radius : int or None
+        Radius to check for nearby components. Uses COMPONENT_PROXIMITY_RADIUS if None.
+    proximity_ratio : float or None
+        Minimum ratio of white pixels on perimeter to keep a small component.
+        Uses COMPONENT_PROXIMITY_RATIO if None.
+
     Returns
     -------
     cleaned : np.ndarray
-        Mask with small components removed.
+        Mask with small/isolated components removed.
     """
     if min_area is None:
         min_area = MIN_COMPONENT_AREA
+    if proximity_radius is None:
+        proximity_radius = COMPONENT_PROXIMITY_RADIUS
+    if proximity_ratio is None:
+        proximity_ratio = COMPONENT_PROXIMITY_RATIO
 
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+    print(f'[DEBUG] component removal: min_area={min_area}, proximity_radius={proximity_radius}, proximity_ratio={proximity_ratio}')
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
         mask, connectivity=8
     )
+    h, w = mask.shape
     cleaned = np.zeros_like(mask)
+
     for i in range(1, num_labels):
         area = int(stats[i, cv2.CC_STAT_AREA])
         if area >= min_area:
             cleaned[labels == i] = 255
+            continue
+
+        # For small components, check proximity to other components (user idea)
+        cx, cy = centroids[i]
+
+        # Sample points on the perimeter of a circle with proximity_radius
+        num_samples = int(max(36, 2 * np.pi * proximity_radius))
+        white_count = 0
+
+        for angle in np.linspace(0, 2 * np.pi, num_samples, endpoint=False):
+            px = int(cx + proximity_radius * np.cos(angle))
+            py = int(cy + proximity_radius * np.sin(angle))
+
+            # Check bounds
+            if 0 <= px < w and 0 <= py < h:
+                # If white and NOT part of the current component, it's a neighbor
+                if mask[py, px] == 255 and labels[py, px] != i:
+                    white_count += 1
+
+        if num_samples > 0 and (white_count / num_samples) >= proximity_ratio:
+            cleaned[labels == i] = 255
+
     return cleaned
 
 
-def postprocess(mask, min_area=MIN_COMPONENT_AREA):
+def postprocess(mask, min_area=MIN_COMPONENT_AREA,
+                proximity_radius=None, proximity_ratio=None):
     """
     Full post-processing pipeline: reconstruction -> closing -> small component removal.
 
@@ -370,6 +427,12 @@ def postprocess(mask, min_area=MIN_COMPONENT_AREA):
     ----------
     mask : np.ndarray
         Raw binary segmentation mask.
+    min_area : int
+        Min area for components.
+    proximity_radius : int or None
+        Radius for proximity check.
+    proximity_ratio : float or None
+        Threshold ratio for proximity check.
 
     Returns
     -------
@@ -382,7 +445,15 @@ def postprocess(mask, min_area=MIN_COMPONENT_AREA):
 
     closed = apply_closing(recon)
 
-    small_removed = remove_small_components(closed, min_area=min_area)
+    if RUN_SMALL_REMOVAL:
+        small_removed = remove_small_components(
+            closed,
+            min_area=min_area,
+            proximity_radius=proximity_radius,
+            proximity_ratio=proximity_ratio
+        )
+    else:
+        small_removed = closed.copy()
 
     intermediates = {
         "07_reconstructed": recon,
@@ -536,7 +607,12 @@ def run_classic_pipeline(image_path, output_dir=None, save_intermediates=True):
     preprocess_ints["06_segmented"] = seg_mask
 
     # Stage C: Post-processing
-    clean_mask, postprocess_ints = postprocess(seg_mask, min_area=MIN_COMPONENT_AREA)
+    clean_mask, postprocess_ints = postprocess(
+        seg_mask,
+        min_area=MIN_COMPONENT_AREA,
+        proximity_radius=COMPONENT_PROXIMITY_RADIUS,
+        proximity_ratio=COMPONENT_PROXIMITY_RATIO
+    )
 
     # Stage D: Separation
     separated = separate_branches(clean_mask)
