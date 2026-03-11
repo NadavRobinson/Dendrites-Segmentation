@@ -72,23 +72,21 @@ DEFAULT_PARAMS = {
     "MIN_COMPONENT_AREA": 250,
     "DISTANCE_THRESHOLD": 0.07,
     "COMPONENT_PROXIMITY_RADIUS": 30,
-    "COMPONENT_PROXIMITY_RATIO": 0.1,
+    "COMPONENT_PROXIMITY_RATIO": 0.5,
     "RUN_SMALL_REMOVAL": False,
 }
 EASY_PARAMS = DEFAULT_PARAMS.copy()
 HARD_PARAMS = DEFAULT_PARAMS.copy()
 EASY_PARAMS.update({
-    "MIN_COMPONENT_AREA": 250,
+    "MIN_COMPONENT_AREA": 75,
     "EROSION_KERNEL_SIZE": 5,
     "EROSION_ITERATIONS": 1,
-    "COMPONENT_PROXIMITY_RADIUS": 20,
-    "COMPONENT_PROXIMITY_RATIO": 0.05,
-    "RUN_SMALL_REMOVAL": False,
 })
 HARD_PARAMS.update({
     "RUN_SMALL_REMOVAL": True,
-    "COMPONENT_PROXIMITY_RADIUS": 30,
-    "COMPONENT_PROXIMITY_RATIO": 0.3,
+    "MIN_COMPONENT_AREA": 450,
+    "COMPONENT_PROXIMITY_RADIUS": 50,
+    "COMPONENT_PROXIMITY_RATIO": 0.5,
 })
 
 PARAMETER_PROFILES = {
@@ -382,39 +380,52 @@ def remove_small_components(mask, min_area=MIN_COMPONENT_AREA,
     if proximity_ratio is None:
         proximity_ratio = COMPONENT_PROXIMITY_RATIO
 
-    print(f'[DEBUG] component removal: min_area={min_area}, proximity_radius={proximity_radius}, proximity_ratio={proximity_ratio}')
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
         mask, connectivity=8
     )
     h, w = mask.shape
     cleaned = np.zeros_like(mask)
+    kept_by_area = 0
+    kept_by_proximity = 0
 
     for i in range(1, num_labels):
         area = int(stats[i, cv2.CC_STAT_AREA])
         if area >= min_area:
             cleaned[labels == i] = 255
+            kept_by_area += 1
             continue
 
         # For small components, check proximity to other components (user idea)
         cx, cy = centroids[i]
+        
+        # Calculate dynamic radius to ensure we look outside the component (user idea)
+        w_i = stats[i, cv2.CC_STAT_WIDTH]
+        h_i = stats[i, cv2.CC_STAT_HEIGHT]
+        comp_extent = 0.5 * np.sqrt(w_i**2 + h_i**2)
+        # Use a minimum of proximity_radius, but at least 5px outside the bounding box
+        current_radius = max(proximity_radius, comp_extent + 10)
 
-        # Sample points on the perimeter of a circle with proximity_radius
-        num_samples = int(max(36, 2 * np.pi * proximity_radius))
+        # Sample points on the perimeter of a circle with current_radius
+        num_samples = int(max(36, 2 * np.pi * current_radius))
         white_count = 0
 
         for angle in np.linspace(0, 2 * np.pi, num_samples, endpoint=False):
-            px = int(cx + proximity_radius * np.cos(angle))
-            py = int(cy + proximity_radius * np.sin(angle))
+            px = int(round(cx + current_radius * np.cos(angle)))
+            py = int(round(cy + current_radius * np.sin(angle)))
 
             # Check bounds
             if 0 <= px < w and 0 <= py < h:
-                # If white and NOT part of the current component, it's a neighbor
-                if mask[py, px] == 255 and labels[py, px] != i:
+                # Proximity: Count any OTHER white components (non-zero labels)
+                other_label = labels[py, px]
+                if other_label != 0 and other_label != i:
                     white_count += 1
 
-        if num_samples > 0 and (white_count / num_samples) >= proximity_ratio:
+        if num_samples > 0 and (float(white_count) / num_samples) >= proximity_ratio:
             cleaned[labels == i] = 255
+            kept_by_proximity += 1
 
+    print(f"  [DEBUG] remove_small_components: Kept {kept_by_area} large components by area, {kept_by_proximity} small components by proximity (dynamic radius).")
+    
     return cleaned
 
 
