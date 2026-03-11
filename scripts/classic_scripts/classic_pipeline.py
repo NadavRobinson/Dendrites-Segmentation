@@ -78,6 +78,7 @@ DEFAULT_PARAMS = {
 EASY_PARAMS = DEFAULT_PARAMS.copy()
 HARD_PARAMS = DEFAULT_PARAMS.copy()
 EASY_PARAMS.update({
+    "RUN_SMALL_REMOVAL": True,
     "MIN_COMPONENT_AREA": 75,
     "EROSION_KERNEL_SIZE": 5,
     "EROSION_ITERATIONS": 1,
@@ -423,8 +424,6 @@ def remove_small_components(mask, min_area=MIN_COMPONENT_AREA,
         if num_samples > 0 and (float(white_count) / num_samples) >= proximity_ratio:
             cleaned[labels == i] = 255
             kept_by_proximity += 1
-
-    print(f"  [DEBUG] remove_small_components: Kept {kept_by_area} large components by area, {kept_by_proximity} small components by proximity (dynamic radius).")
     
     return cleaned
 

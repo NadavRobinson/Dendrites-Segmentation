@@ -1,9 +1,6 @@
-*.PNG
-*.jpg
-*.jpeg
-*.tif
 *.pyc
 *.pt
 *.txt
 *.json
 *.csv
+ignored/
