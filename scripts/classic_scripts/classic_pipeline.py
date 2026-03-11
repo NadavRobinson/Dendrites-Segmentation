@@ -715,98 +715,99 @@ def process_all_images(input_dir, output_dir, save_intermediates=True):
     return all_results
 
 
-# ===========================================================================
-# CLI entry point
-# ===========================================================================
-
-"""Argparse CLI for the classic segmentation pipeline."""
-parser = argparse.ArgumentParser(
-    description="Classic CV pipeline for SEM dendrite segmentation"
-)
-parser.add_argument(
-    "image", nargs="?", default=None,
-    help="Path to a single SEM image (omit for batch mode with --input)"
-)
-parser.add_argument(
-    "--input", default=None,
-    help="Directory of SEM images for batch processing"
-)
-parser.add_argument(
-    "--output", default=None,
-    help=(
-        "Output directory. If omitted, defaults to output/easy with --easy, "
-        "output/hard with --hard, otherwise output/classic."
+def main():
+    """Argparse CLI for the classic segmentation pipeline."""
+    parser = argparse.ArgumentParser(
+        description="Classic CV pipeline for SEM dendrite segmentation"
     )
-)
-parser.add_argument(
-    "--no-intermediates", action="store_true",
-    help="Only save final mask and skeleton, not intermediate stages"
-)
-profile_group = parser.add_mutually_exclusive_group()
-profile_group.add_argument(
-    "--easy", action="store_true",
-    help=(
-        "Use EASY parameter profile. In batch mode without --input, defaults "
-        "to dataset/Easy and output/easy."
+    parser.add_argument(
+        "image", nargs="?", default=None,
+        help="Path to a single SEM image (omit for batch mode with --input)"
     )
-)
-profile_group.add_argument(
-    "--hard", action="store_true",
-    help=(
-        "Use HARD parameter profile. In batch mode without --input, defaults "
-        "to dataset/Hard and output/hard."
+    parser.add_argument(
+        "--input", default=None,
+        help="Directory of SEM images for batch processing"
     )
-)
-
-args = parser.parse_args()
-
-script_dir = os.path.dirname(os.path.abspath(__file__))
-repo_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
-
-if args.easy:
-    selected_profile = "easy"
-elif args.hard:
-    selected_profile = "hard"
-else:
-    selected_profile = "default"
-apply_parameter_profile(selected_profile)
-print(f"Using parameter profile: {selected_profile}")
-
-if args.output:
-    output_dir = args.output
-elif selected_profile == "easy":
-    output_dir = os.path.join(repo_root, "output", "easy")
-elif selected_profile == "hard":
-    output_dir = os.path.join(repo_root, "output", "hard")
-else:
-    output_dir = os.path.join(repo_root, "output", "classic")
-
-if args.image:
-    # Single image mode
-    if not os.path.isfile(args.image):
-        print(f"Error: Image not found: {args.image}")
-        sys.exit(1)
-    run_classic_pipeline(
-        args.image, output_dir,
-        save_intermediates=not args.no_intermediates
+    parser.add_argument(
+        "--output", default=None,
+        help=(
+            "Output directory. If omitted, defaults to output/easy with --easy, "
+            "output/hard with --hard, otherwise output/classic."
+        )
     )
-else:
-    input_dir = args.input
-    if input_dir is None and selected_profile == "easy":
-        input_dir = os.path.join(repo_root, "dataset", "Easy")
-    elif input_dir is None and selected_profile == "hard":
-        input_dir = os.path.join(repo_root, "dataset", "Hard")
-
-    if not input_dir:
-        parser.print_help()
-        sys.exit(1)
-
-    # Batch mode
-    if not os.path.isdir(input_dir):
-        print(f"Error: Directory not found: {input_dir}")
-        sys.exit(1)
-    process_all_images(
-        input_dir,
-        output_dir,
-        save_intermediates=not args.no_intermediates,
+    parser.add_argument(
+        "--no-intermediates", action="store_true",
+        help="Only save final mask and skeleton, not intermediate stages"
     )
+    profile_group = parser.add_mutually_exclusive_group()
+    profile_group.add_argument(
+        "--easy", action="store_true",
+        help=(
+            "Use EASY parameter profile. In batch mode without --input, defaults "
+            "to dataset/Easy and output/easy."
+        )
+    )
+    profile_group.add_argument(
+        "--hard", action="store_true",
+        help=(
+            "Use HARD parameter profile. In batch mode without --input, defaults "
+            "to dataset/Hard and output/hard."
+        )
+    )
+
+    args = parser.parse_args()
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.abspath(os.path.join(script_dir, "..", ".."))
+
+    if args.easy:
+        selected_profile = "easy"
+    elif args.hard:
+        selected_profile = "hard"
+    else:
+        selected_profile = "default"
+    apply_parameter_profile(selected_profile)
+    print(f"Using parameter profile: {selected_profile}")
+
+    if args.output:
+        output_dir = args.output
+    elif selected_profile == "easy":
+        output_dir = os.path.join(repo_root, "output", "easy")
+    elif selected_profile == "hard":
+        output_dir = os.path.join(repo_root, "output", "hard")
+    else:
+        output_dir = os.path.join(repo_root, "output", "classic")
+
+    if args.image:
+        # Single image mode
+        if not os.path.isfile(args.image):
+            print(f"Error: Image not found: {args.image}")
+            sys.exit(1)
+        run_classic_pipeline(
+            args.image, output_dir,
+            save_intermediates=not args.no_intermediates
+        )
+    else:
+        input_dir = args.input
+        if input_dir is None and selected_profile == "easy":
+            input_dir = os.path.join(repo_root, "dataset", "Easy")
+        elif input_dir is None and selected_profile == "hard":
+            input_dir = os.path.join(repo_root, "dataset", "Hard")
+
+        if not input_dir:
+            parser.print_help()
+            sys.exit(1)
+
+        # Batch mode
+        if not os.path.isdir(input_dir):
+            print(f"Error: Directory not found: {input_dir}")
+            sys.exit(1)
+        process_all_images(
+            input_dir,
+            output_dir,
+            save_intermediates=not args.no_intermediates,
+        )
+
+
+if __name__ == "__main__":
+    main()

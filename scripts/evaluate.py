@@ -451,12 +451,23 @@ def evaluate_all(classic_dir, yolo_dir, gt_dir, image_dir, output_dir):
         else:
             yolo_mask = None
 
-        # Generate comparison figure if source image exists
+        # Generate comparison figure if source image exists.
+        # Supports both flat image_dir and split layouts:
+        #   image_dir/easy + image_dir/hard
         source_path = None
-        for ext in ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp'):
-            candidate = os.path.join(image_dir, f"{name}{ext}")
-            if os.path.exists(candidate):
-                source_path = candidate
+        search_dirs = [image_dir]
+        for sub in ("easy", "Easy", "hard", "Hard"):
+            subdir = os.path.join(image_dir, sub)
+            if os.path.isdir(subdir):
+                search_dirs.append(subdir)
+
+        for base_dir in search_dirs:
+            for ext in ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp'):
+                candidate = os.path.join(base_dir, f"{name}{ext}")
+                if os.path.exists(candidate):
+                    source_path = candidate
+                    break
+            if source_path is not None:
                 break
 
         if source_path and classic_mask is not None and yolo_mask is not None:

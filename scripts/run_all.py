@@ -15,12 +15,51 @@ import numpy as np
 import os
 import sys
 
-# Add project directory to path for imports
-sys.path.insert(0, os.path.dirname(__file__))
+# Add project/script directories to path for imports.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, SCRIPT_DIR)
+sys.path.insert(0, os.path.join(SCRIPT_DIR, "classic_scripts"))
+sys.path.insert(0, os.path.join(SCRIPT_DIR, "yolo_scripts"))
 
-from classic_pipeline import run_classic_pipeline, process_all_images, skeletonize_mask
+from classic_pipeline import apply_parameter_profile, process_all_images, skeletonize_mask
 from evaluate import create_comparison_figure, evaluate_all
-from utils import load_image, save_image, list_images
+from utils import save_image, list_images
+from yolo_pipeline import predict_batch
+
+
+def _find_split_subdirs(images_dir):
+    """
+    Detect split layout:
+      images_dir/easy + images_dir/hard (case-insensitive first letter).
+    """
+    easy_dir = None
+    hard_dir = None
+
+    for candidate in ("easy", "Easy"):
+        path = os.path.join(images_dir, candidate)
+        if os.path.isdir(path):
+            easy_dir = path
+            break
+
+    for candidate in ("hard", "Hard"):
+        path = os.path.join(images_dir, candidate)
+        if os.path.isdir(path):
+            hard_dir = path
+            break
+
+    if easy_dir and hard_dir:
+        return {"easy": easy_dir, "hard": hard_dir}
+    return {}
+
+
+def _collect_image_paths(images_dir, split_subdirs):
+    """Collect images from either one directory or easy/hard subdirectories."""
+    if split_subdirs:
+        paths = []
+        for subset in ("easy", "hard"):
+            paths.extend(list_images(split_subdirs[subset]))
+        return sorted(paths)
+    return list_images(images_dir)
 
 
 def run_orchestrator(images_dir, gt_dir=None, yolo_model=None, output_dir=None):
@@ -52,25 +91,55 @@ def run_orchestrator(images_dir, gt_dir=None, yolo_model=None, output_dir=None):
     compare_dir = os.path.join(output_dir, "comparisons")
     eval_dir = os.path.join(output_dir, "evaluation")
 
-    image_paths = list_images(images_dir)
+    split_subdirs = _find_split_subdirs(images_dir)
+    image_paths = _collect_image_paths(images_dir, split_subdirs)
     num_images = len(image_paths)
     if num_images == 0:
         print(f"No images found in {images_dir}")
         return {"images_processed": 0}
 
     print(f"{'=' * 60}")
-    print(f"SEM Dendrite Segmentation — Full Pipeline")
+    print("SEM Dendrite Segmentation - Full Pipeline")
     print(f"  Images:     {images_dir} ({num_images} files)")
     print(f"  GT masks:   {gt_dir or 'not provided'}")
     print(f"  YOLO model: {yolo_model or 'not provided (skip YOLO)'}")
     print(f"  Output:     {output_dir}")
+    if split_subdirs:
+        print(f"  Split mode: easy={split_subdirs['easy']} | hard={split_subdirs['hard']}")
+    else:
+        print("  Split mode: disabled")
     print(f"{'=' * 60}\n")
 
     # ------------------------------------------------------------------
     # Stage 1: Classic pipeline
     # ------------------------------------------------------------------
     print("[Stage 1/5] Running classic pipeline...")
-    classic_results = process_all_images(images_dir, classic_dir)
+    classic_results = {}
+
+    if split_subdirs:
+        for profile_name in ("easy", "hard"):
+            subset_dir = split_subdirs[profile_name]
+            subset_paths = list_images(subset_dir)
+            if not subset_paths:
+                print(f"  - {profile_name.upper()}: no images found in {subset_dir}")
+                continue
+
+            print(
+                f"  - {profile_name.upper()} profile on {subset_dir} "
+                f"({len(subset_paths)} files)"
+            )
+            apply_parameter_profile(profile_name)
+            subset_results = process_all_images(subset_dir, classic_dir)
+
+            for name, result in subset_results.items():
+                if name in classic_results:
+                    print(f"  WARNING: duplicate basename across subsets: {name}. Overwriting.")
+                classic_results[name] = result
+
+        # Reset profile after split processing.
+        apply_parameter_profile("default")
+    else:
+        classic_results = process_all_images(images_dir, classic_dir)
 
     # Save top-level mask files for evaluate_all() compatibility (<name>_mask.png)
     for name, res in classic_results.items():
@@ -85,10 +154,26 @@ def run_orchestrator(images_dir, gt_dir=None, yolo_model=None, output_dir=None):
     if yolo_model:
         print("[Stage 2/5] Running YOLO pipeline...")
         if not os.path.isfile(yolo_model):
-            print(f"  WARNING: YOLO model not found: {yolo_model} — skipping")
+            print(f"  WARNING: YOLO model not found: {yolo_model} - skipping")
         else:
-            from yolo_pipeline import predict_batch
-            yolo_results = predict_batch(yolo_model, images_dir, yolo_dir)
+            if split_subdirs:
+                for subset_name in ("easy", "hard"):
+                    subset_dir = split_subdirs[subset_name]
+                    subset_paths = list_images(subset_dir)
+                    if not subset_paths:
+                        continue
+
+                    print(
+                        f"  - Predicting {subset_name} subset: {subset_dir} "
+                        f"({len(subset_paths)} files)"
+                    )
+                    subset_preds = predict_batch(yolo_model, subset_dir, yolo_dir)
+                    for name, mask in subset_preds.items():
+                        if name in yolo_results:
+                            print(f"  WARNING: duplicate YOLO basename across subsets: {name}. Overwriting.")
+                        yolo_results[name] = mask
+            else:
+                yolo_results = predict_batch(yolo_model, images_dir, yolo_dir)
             print(f"  -> {len(yolo_results)} masks generated\n")
     else:
         print("[Stage 2/5] Skipping YOLO pipeline (no model provided)\n")
@@ -163,7 +248,7 @@ def run_orchestrator(images_dir, gt_dir=None, yolo_model=None, output_dir=None):
 
         # Print average metrics
         for method in ["classic", "yolo"]:
-            dices = [e[method]["dice"] for e in eval_results.values() if method in e]
+            dices = [entry[method]["dice"] for entry in eval_results.values() if method in entry]
             if dices:
                 label = method.capitalize()
                 print(f"  {label} avg Dice:      {np.mean(dices):.3f}")
@@ -176,9 +261,8 @@ def run_orchestrator(images_dir, gt_dir=None, yolo_model=None, output_dir=None):
         "comparisons_dir": compare_dir,
         "figures_created": figures_created,
         "eval_results": eval_results,
+        "split_mode": bool(split_subdirs),
     }
-
-
 def main():
     """Argparse CLI for the orchestrator."""
     parser = argparse.ArgumentParser(
