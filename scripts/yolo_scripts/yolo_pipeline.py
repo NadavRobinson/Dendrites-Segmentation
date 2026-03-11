@@ -20,7 +20,12 @@ from skimage.morphology import skeletonize
 
 # Add project directory to path for imports
 sys.path.insert(0, os.path.dirname(__file__))
-from utils import load_image, save_image, list_images
+try:
+    from utils import save_image, list_images
+except ModuleNotFoundError:
+    # Reuse shared utility helpers from classic_scripts if local utils is absent.
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "classic_scripts"))
+    from utils import save_image, list_images
 
 # ---------------------------------------------------------------------------
 # Training hyperparameters
