@@ -4,7 +4,7 @@ Summary Report Build
 images_dir: .\dataset
 gt_dir: .\ground_truth_masks
 classic_dir: .\run_all_output\classic
-yolo_dir: .\run_all_output_using_old_imgs\yolo
+yolo_dir: .\run_all_output\yolo
 output_dir: .\output\summary_report
 
 records: 14
