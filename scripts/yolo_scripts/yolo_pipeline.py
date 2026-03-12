@@ -35,8 +35,8 @@ DEFAULT_MODEL = "yolo11x-seg.pt"   # Nano model — fast training, decent accura
 DEFAULT_EPOCHS = 100
 DEFAULT_IMGSZ = 640
 DEFAULT_BATCH = 8
-DEFAULT_PATIENCE = 20              # Early stopping patience
-DEFAULT_FREEZE = 10                # Freeze first N backbone layers
+DEFAULT_PATIENCE = 0              # Early stopping patience
+DEFAULT_FREEZE = 0                # Freeze first N backbone layers
 DEFAULT_LR0 = 0.001                # Initial learning rate
 DEFAULT_CONF = 0.25                # Inference confidence threshold
 DEFAULT_WORKERS = 0 if os.name == "nt" else 8
