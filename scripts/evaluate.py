@@ -20,6 +20,50 @@ from utils import load_image, save_image, list_images, create_comparison_strip, 
 # Metrics
 # ===========================================================================
 
+def _to_single_channel(mask):
+    """
+    Convert mask-like arrays to 2D single-channel format.
+    """
+    mask = np.asarray(mask)
+    if mask.ndim == 2:
+        return mask
+
+    if mask.ndim == 3 and mask.shape[2] == 1:
+        return mask[:, :, 0]
+
+    if mask.ndim == 3 and mask.shape[2] == 3:
+        return cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+
+    if mask.ndim == 3 and mask.shape[2] == 4:
+        return cv2.cvtColor(mask, cv2.COLOR_BGRA2GRAY)
+
+    mask = np.squeeze(mask)
+    if mask.ndim != 2:
+        raise ValueError(f"Unsupported mask shape: {mask.shape}")
+    return mask
+
+
+def _prepare_pred_for_gt(pred, gt, image_name, method_name):
+    """
+    Ensure prediction and GT are single-channel and shape-compatible.
+    """
+    pred2d = _to_single_channel(pred)
+    gt2d = _to_single_channel(gt)
+
+    if pred2d.shape != gt2d.shape:
+        print(
+            f"  WARNING: {method_name} mask shape {pred2d.shape} != GT {gt2d.shape} "
+            f"for {image_name}; resizing prediction to GT shape."
+        )
+        pred2d = cv2.resize(
+            pred2d.astype(np.uint8),
+            (gt2d.shape[1], gt2d.shape[0]),
+            interpolation=cv2.INTER_NEAREST,
+        )
+
+    return pred2d, gt2d
+
+
 def compute_dice(pred, gt):
     """
     Dice similarity coefficient between two binary masks.
@@ -131,6 +175,14 @@ def evaluate_single(pred, gt):
     metrics : dict
         Dictionary with keys: dice, iou, precision, recall.
     """
+    pred = _to_single_channel(pred)
+    gt = _to_single_channel(gt)
+
+    if pred.shape != gt.shape:
+        raise ValueError(
+            f"Prediction/GT shape mismatch in evaluate_single: {pred.shape} vs {gt.shape}"
+        )
+
     dice = compute_dice(pred, gt)
     iou = compute_iou(pred, gt)
     precision, recall = compute_precision_recall(pred, gt)
@@ -392,7 +444,8 @@ def format_failure_report(failures):
 # Batch evaluation
 # ===========================================================================
 
-def evaluate_all(classic_dir, yolo_dir, gt_dir, image_dir, output_dir):
+def evaluate_all(classic_dir, yolo_dir, gt_dir, image_dir, output_dir,
+                 save_comparison_figures=True):
     """
     Batch evaluation: load masks by matching filenames, compute metrics,
     generate comparison figures, and write summary.
@@ -415,6 +468,8 @@ def evaluate_all(classic_dir, yolo_dir, gt_dir, image_dir, output_dir):
         Directory containing original source images.
     output_dir : str
         Directory to save comparison figures and summary.
+    save_comparison_figures : bool
+        If True, write comparison PNGs in output_dir.
 
     Returns
     -------
@@ -431,7 +486,7 @@ def evaluate_all(classic_dir, yolo_dir, gt_dir, image_dir, output_dir):
 
     for gt_path in gt_paths:
         name = os.path.splitext(os.path.basename(gt_path))[0]
-        gt_mask = load_image(gt_path, grayscale=True)
+        gt_mask = _to_single_channel(load_image(gt_path, grayscale=True))
 
         entry = {}
 
@@ -439,7 +494,10 @@ def evaluate_all(classic_dir, yolo_dir, gt_dir, image_dir, output_dir):
         classic_path = os.path.join(classic_dir, f"{name}_mask.png")
         if os.path.exists(classic_path):
             classic_mask = load_image(classic_path, grayscale=True)
-            entry["classic"] = evaluate_single(classic_mask, gt_mask)
+            classic_eval_mask, gt_eval_mask = _prepare_pred_for_gt(
+                classic_mask, gt_mask, name, "Classic"
+            )
+            entry["classic"] = evaluate_single(classic_eval_mask, gt_eval_mask)
         else:
             classic_mask = None
 
@@ -447,7 +505,10 @@ def evaluate_all(classic_dir, yolo_dir, gt_dir, image_dir, output_dir):
         yolo_path = os.path.join(yolo_dir, f"{name}_mask.png")
         if os.path.exists(yolo_path):
             yolo_mask = load_image(yolo_path, grayscale=True)
-            entry["yolo"] = evaluate_single(yolo_mask, gt_mask)
+            yolo_eval_mask, gt_eval_mask = _prepare_pred_for_gt(
+                yolo_mask, gt_mask, name, "YOLO"
+            )
+            entry["yolo"] = evaluate_single(yolo_eval_mask, gt_eval_mask)
         else:
             yolo_mask = None
 
@@ -470,7 +531,8 @@ def evaluate_all(classic_dir, yolo_dir, gt_dir, image_dir, output_dir):
             if source_path is not None:
                 break
 
-        if source_path and classic_mask is not None and yolo_mask is not None:
+        if (save_comparison_figures and source_path and
+                classic_mask is not None and yolo_mask is not None):
             from skimage.morphology import skeletonize
             skel = skeletonize((classic_mask > 0).astype(bool))
             skeleton = (skel.astype(np.uint8) * 255)

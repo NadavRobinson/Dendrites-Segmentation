@@ -21,6 +21,7 @@ Usage example:
 import argparse
 import csv
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -30,7 +31,9 @@ import numpy as np
 from skimage.morphology import skeletonize
 
 # Add project directory to path for imports
-sys.path.insert(0, os.path.dirname(__file__))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, SCRIPT_DIR)
+sys.path.insert(0, os.path.join(SCRIPT_DIR, "classic_scripts"))
 from evaluate import evaluate_single, analyze_failures  # noqa: E402
 from utils import list_images, load_image, save_image  # noqa: E402
 
@@ -104,6 +107,14 @@ def _find_source_path(images_dir, name):
         candidate = os.path.join(images_dir, f"{name}{ext}")
         if os.path.isfile(candidate):
             return candidate
+    for subset in ("easy", "Easy", "hard", "Hard"):
+        subset_dir = os.path.join(images_dir, subset)
+        if not os.path.isdir(subset_dir):
+            continue
+        for ext in IMAGE_EXTENSIONS:
+            candidate = os.path.join(subset_dir, f"{name}{ext}")
+            if os.path.isfile(candidate):
+                return candidate
     return None
 
 
@@ -145,6 +156,42 @@ def _load_binary_from_path(path):
         return None
     image = load_image(path, grayscale=True)
     return _to_binary_mask(image)
+
+
+def _parse_metrics_summary(metrics_summary_path):
+    """
+    Parse run_all evaluation summary text into per-image metric records.
+
+    Expected row format:
+        <image_name> <Classic|YOLO> <dice> <iou> <precision> <recall>
+    """
+    metrics_by_name = {}
+    if not metrics_summary_path or not os.path.isfile(metrics_summary_path):
+        return metrics_by_name
+
+    row_re = re.compile(
+        r"^(?P<name>\S+)\s+"
+        r"(?P<method>Classic|YOLO)\s+"
+        r"(?P<dice>\d+(?:\.\d+)?)\s+"
+        r"(?P<iou>\d+(?:\.\d+)?)\s+"
+        r"(?P<precision>\d+(?:\.\d+)?)\s+"
+        r"(?P<recall>\d+(?:\.\d+)?)\s*$"
+    )
+
+    with open(metrics_summary_path, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            match = row_re.match(line.strip())
+            if not match:
+                continue
+            name = match.group("name")
+            method = match.group("method").lower()
+            metrics_by_name.setdefault(name, {})[method] = {
+                "dice": float(match.group("dice")),
+                "iou": float(match.group("iou")),
+                "precision": float(match.group("precision")),
+                "recall": float(match.group("recall")),
+            }
+    return metrics_by_name
 
 
 def _to_bgr(image):
@@ -264,8 +311,8 @@ def _make_case_figure(source, gt, classic, yolo, output_path):
     save_image(figure, output_path)
 
 
-def _collect_records(images_dir, gt_dir, classic_dir, yolo_dir):
-    """Collect per-image metadata and computed metrics."""
+def _collect_records(images_dir, gt_dir, classic_dir, yolo_dir, metrics_by_name=None):
+    """Collect per-image metadata and metrics (from summary file or recomputed)."""
     gt_paths = list_images(gt_dir)
     records = []
 
@@ -288,10 +335,16 @@ def _collect_records(images_dir, gt_dir, classic_dir, yolo_dir):
             "classic": None,
             "yolo": None,
         }
-        if classic_mask is not None:
-            row["classic"] = evaluate_single(classic_mask, gt_mask)
-        if yolo_mask is not None:
-            row["yolo"] = evaluate_single(yolo_mask, gt_mask)
+
+        if metrics_by_name is not None:
+            metric_entry = metrics_by_name.get(name, {})
+            row["classic"] = metric_entry.get("classic")
+            row["yolo"] = metric_entry.get("yolo")
+        else:
+            if classic_mask is not None:
+                row["classic"] = evaluate_single(classic_mask, gt_mask)
+            if yolo_mask is not None:
+                row["yolo"] = evaluate_single(yolo_mask, gt_mask)
 
         records.append(row)
     return sorted(records, key=lambda r: r["name"])
@@ -800,7 +853,30 @@ def build_report(args):
     os.makedirs(cases_dir, exist_ok=True)
     os.makedirs(train_dir, exist_ok=True)
 
-    records = _collect_records(args.images, args.gt, args.classic, args.yolo)
+    metrics_by_name = _parse_metrics_summary(args.metrics_summary)
+    if args.metrics_summary and os.path.isfile(args.metrics_summary):
+        if not metrics_by_name:
+            raise ValueError(
+                f"Metrics summary exists but no metric rows were parsed: {args.metrics_summary}"
+            )
+        print(f"Using precomputed metrics from: {args.metrics_summary}")
+    elif args.metrics_summary:
+        print(f"Metrics summary not found, recomputing metrics from masks: {args.metrics_summary}")
+
+    records = _collect_records(
+        args.images,
+        args.gt,
+        args.classic,
+        args.yolo,
+        metrics_by_name=metrics_by_name if metrics_by_name else None,
+    )
+    if metrics_by_name:
+        missing = [r["name"] for r in records if (r.get("classic") is None and r.get("yolo") is None)]
+        if missing:
+            print(
+                f"WARNING: No metric rows in summary for {len(missing)} GT image(s); "
+                "their CSV metric fields will be empty."
+            )
     failures = _build_failures(records, args.failure_threshold)
     csv_info = _write_csv_tables(records, failures, args.out)
 
@@ -922,6 +998,14 @@ def parse_args():
     parser.add_argument("--gt", required=True, help="Directory with ground-truth masks")
     parser.add_argument("--classic", required=True, help="Directory with classic masks")
     parser.add_argument("--yolo", required=True, help="Directory with YOLO masks")
+    parser.add_argument(
+        "--metrics-summary",
+        default=os.path.join("run_all_output", "evaluation", "metrics_summary.txt"),
+        help=(
+            "Path to run_all evaluation metrics_summary.txt. "
+            "If present, metrics are loaded from this file instead of recomputed."
+        ),
+    )
     parser.add_argument(
         "--yolo-train",
         default=None,

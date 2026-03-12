@@ -286,6 +286,30 @@ def train_yolo(dataset_yaml, model=DEFAULT_MODEL, epochs=DEFAULT_EPOCHS,
 # Inference
 # ===========================================================================
 
+def _prepare_image_for_yolo(image_path):
+    """
+    Load an image and ensure 3-channel BGR format for YOLO inference.
+
+    SEM inputs may be grayscale or BGRA; YOLO models expect 3 channels.
+    """
+    image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
+    if image is None:
+        raise FileNotFoundError(f"Failed to read image: {image_path}")
+
+    if image.ndim == 2:
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    elif image.ndim == 3 and image.shape[2] == 1:
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+    elif image.ndim == 3 and image.shape[2] == 4:
+        image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+
+    if image.dtype != np.uint8:
+        image = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX)
+        image = image.astype(np.uint8)
+
+    return image
+
+
 def predict_single(model_path, image_path, conf=DEFAULT_CONF):
     """
     Run YOLO-Seg inference on a single image and extract the binary mask.
@@ -310,10 +334,9 @@ def predict_single(model_path, image_path, conf=DEFAULT_CONF):
     from ultralytics import YOLO
 
     model = YOLO(model_path)
-    results = model.predict(image_path, conf=conf, verbose=False)
+    image = _prepare_image_for_yolo(image_path)
+    results = model.predict(image, conf=conf, verbose=False)
 
-    # Get original image dimensions
-    image = cv2.imread(image_path)
     h, w = image.shape[:2]
 
     # Combine all instance masks into one binary mask
@@ -367,8 +390,13 @@ def predict_batch(model_path, input_dir, output_dir, conf=DEFAULT_CONF):
         basename = os.path.splitext(os.path.basename(path))[0]
 
         # Run inference
-        preds = model.predict(path, conf=conf, verbose=False, save=True)
-        image = cv2.imread(path)
+        try:
+            image = _prepare_image_for_yolo(path)
+        except FileNotFoundError as exc:
+            print(f"  WARNING: {exc}")
+            continue
+
+        preds = model.predict(image, conf=conf, verbose=False, save=False)
         h, w = image.shape[:2]
 
         combined_mask = np.zeros((h, w), dtype=np.uint8)

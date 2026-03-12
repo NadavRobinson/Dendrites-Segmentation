@@ -1,0 +1,118 @@
+======================================================================
+SEM Dendrite Segmentation — Evaluation Summary
+======================================================================
+
+Image                     Method       Dice    IoU   Prec    Rec
+----------------------------------------------------------------------
+2e-9_100s_002             Classic     0.923  0.857  0.857  1.000
+2e-9_100s_002             YOLO        0.579  0.407  0.409  0.991
+
+2e-9_100s_014             Classic     0.931  0.872  0.872  1.000
+2e-9_100s_014             YOLO        0.655  0.487  0.560  0.789
+
+2e-9_100s_017             Classic     0.699  0.538  0.538  1.000
+2e-9_100s_017             YOLO        0.103  0.055  0.066  0.241
+
+2e-9_100s_019             Classic     0.997  0.995  0.995  1.000
+2e-9_100s_019             YOLO        0.596  0.424  0.454  0.865
+
+70nm_diameter_100nm_pitch_008 Classic     0.927  0.863  0.863  1.000
+70nm_diameter_100nm_pitch_008 YOLO        0.438  0.280  0.302  0.798
+
+70nm_diameter_100nm_pitch_012 Classic     0.919  0.850  0.850  1.000
+70nm_diameter_100nm_pitch_012 YOLO        0.523  0.354  0.399  0.758
+
+70nm_diameter_100nm_pitch_022 Classic     0.995  0.991  0.991  1.000
+70nm_diameter_100nm_pitch_022 YOLO        0.454  0.293  0.374  0.577
+
+70nm_diameter_100nm_pitch_031 Classic     1.000  1.000  1.000  1.000
+70nm_diameter_100nm_pitch_031 YOLO        0.359  0.218  0.272  0.527
+
+70nm_diameter_100nm_pitch_033 Classic     0.024  0.012  0.017  0.043
+70nm_diameter_100nm_pitch_033 YOLO        0.065  0.034  0.039  0.194
+
+Ag_1e-8_008               Classic     1.000  1.000  1.000  1.000
+Ag_1e-8_008               YOLO        0.436  0.278  0.325  0.660
+
+Ag_1e-9__02_016           Classic     0.906  0.828  0.828  1.000
+Ag_1e-9__02_016           YOLO        0.560  0.389  0.432  0.796
+
+Ag_2e-9_013               Classic     0.760  0.612  0.612  1.000
+Ag_2e-9_013               YOLO        0.518  0.350  0.351  0.994
+
+Ag_2e-9_014               Classic     0.753  0.603  0.603  1.000
+Ag_2e-9_014               YOLO        0.479  0.315  0.316  0.994
+
+Ag_40nm_pitch_014         Classic     1.000  1.000  1.000  1.000
+Ag_40nm_pitch_014         YOLO        0.514  0.346  0.395  0.736
+
+----------------------------------------------------------------------
+AVERAGES
+----------------------------------------------------------------------
+Classic (n=14)                        0.845  0.787  0.788  0.932
+YOLO (n=14)                           0.448  0.302  0.335  0.709
+
+======================================================================
+
+======================================================================
+Failure Analysis (Dice < threshold)
+======================================================================
+  8 failure(s) detected:
+
+  Image: 2e-9_100s_017
+    Method:    YOLO
+    Dice:      0.103
+    Precision: 0.066
+    Recall:    0.241
+    Cause:     Fundamental mismatch — wrong region or severe artifacts (Classic succeeds → likely OOD sample for YOLO)
+
+  Image: 70nm_diameter_100nm_pitch_008
+    Method:    YOLO
+    Dice:      0.438
+    Precision: 0.302
+    Recall:    0.798
+    Cause:     Over-segmentation — noise included as dendrite (Classic succeeds → likely OOD sample for YOLO)
+
+  Image: 70nm_diameter_100nm_pitch_022
+    Method:    YOLO
+    Dice:      0.454
+    Precision: 0.374
+    Recall:    0.577
+    Cause:     Fundamental mismatch — wrong region or severe artifacts (Classic succeeds → likely OOD sample for YOLO)
+
+  Image: 70nm_diameter_100nm_pitch_031
+    Method:    YOLO
+    Dice:      0.359
+    Precision: 0.272
+    Recall:    0.527
+    Cause:     Fundamental mismatch — wrong region or severe artifacts (Classic succeeds → likely OOD sample for YOLO)
+
+  Image: 70nm_diameter_100nm_pitch_033
+    Method:    Classic
+    Dice:      0.024
+    Precision: 0.017
+    Recall:    0.043
+    Cause:     Fundamental mismatch — wrong region or severe artifacts
+
+  Image: 70nm_diameter_100nm_pitch_033
+    Method:    YOLO
+    Dice:      0.065
+    Precision: 0.039
+    Recall:    0.194
+    Cause:     Fundamental mismatch — wrong region or severe artifacts
+
+  Image: Ag_1e-8_008
+    Method:    YOLO
+    Dice:      0.436
+    Precision: 0.325
+    Recall:    0.660
+    Cause:     Over-segmentation — noise included as dendrite (Classic succeeds → likely OOD sample for YOLO)
+
+  Image: Ag_2e-9_014
+    Method:    YOLO
+    Dice:      0.479
+    Precision: 0.316
+    Recall:    0.994
+    Cause:     Over-segmentation — noise included as dendrite (Classic succeeds → likely OOD sample for YOLO)
+
+======================================================================

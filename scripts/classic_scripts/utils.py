@@ -98,6 +98,31 @@ def remove_scale_bar(image):
     return cleaned_cutoff
 
 
+def _to_display_uint8(image):
+    """
+    Convert arbitrary image dtypes/ranges to uint8 for visualization.
+    """
+    arr = np.asarray(image)
+
+    if arr.dtype == np.uint8:
+        return arr
+    if arr.dtype == np.bool_:
+        return (arr.astype(np.uint8) * 255)
+
+    arr = arr.astype(np.float32)
+    finite = np.isfinite(arr)
+    if not np.any(finite):
+        return np.zeros(arr.shape, dtype=np.uint8)
+
+    min_val = float(arr[finite].min())
+    max_val = float(arr[finite].max())
+    if max_val <= min_val:
+        return np.zeros(arr.shape, dtype=np.uint8)
+
+    scaled = (arr - min_val) * (255.0 / (max_val - min_val))
+    return np.clip(scaled, 0, 255).astype(np.uint8)
+
+
 def create_overlay(image, mask, color=(0, 255, 0), alpha=0.4):
     """
     Create a semi-transparent colored overlay of a mask on a grayscale image.
@@ -131,6 +156,7 @@ def create_overlay(image, mask, color=(0, 255, 0), alpha=0.4):
         base = cv2.cvtColor(base, cv2.COLOR_GRAY2BGR)
     if base.ndim == 3 and base.shape[2] == 1:
         base = np.repeat(base, 3, axis=2)
+    base = _to_display_uint8(base)
 
     # Accept HxW, HxWx1, or other singleton-expanded masks.
     mask = np.asarray(mask)
@@ -181,6 +207,8 @@ def create_comparison_strip(images, titles, height=400):
     """
     panels = []
     for img, title in zip(images, titles):
+        img = _to_display_uint8(img)
+
         # Convert to color if needed
         if img.ndim == 2:
             panel = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
@@ -219,7 +247,7 @@ def create_comparison_strip(images, titles, height=400):
             p = np.vstack([p, pad])
         padded.append(p)
 
-    strip = np.hstack(padded)
+    strip = np.hstack(padded).astype(np.uint8, copy=False)
     return strip
 
 

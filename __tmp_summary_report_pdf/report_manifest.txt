@@ -1,0 +1,19 @@
+Summary Report Build
+====================
+
+images_dir: .\__tmp_report_inputs\images_flat
+gt_dir: .\__tmp_report_inputs\gt_no_mismatch
+classic_dir: .\run_all_output\classic
+yolo_dir: .\run_all_output\yolo
+output_dir: .\__tmp_summary_report_pdf
+
+records: 13
+failures: 6
+
+per_image_csv: .\__tmp_summary_report_pdf\metrics_per_image.csv
+averages_csv: .\__tmp_summary_report_pdf\metrics_averages.csv
+failures_csv: .\__tmp_summary_report_pdf\failures.csv
+latex: .\__tmp_summary_report_pdf\summary_report.tex
+pdf: .\__tmp_summary_report_pdf\summary_report.pdf
+
+compile_status: pdflatex not found on PATH; skipped PDF compilation. Fallback PDF generated with matplotlib: .\__tmp_summary_report_pdf\summary_report.pdf

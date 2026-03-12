@@ -75,16 +75,16 @@ def run_orchestrator(images_dir, gt_dir=None, yolo_model=None, output_dir=None):
     yolo_model : str or None
         Path to trained YOLO weights (optional; skip YOLO if not provided).
     output_dir : str or None
-        Output root directory. Defaults to output/.
+        Output root directory. Defaults to run_all_output/.
 
     Returns
     -------
     summary : dict
         Summary of the orchestrator run with counts and paths.
     """
-    project_dir = os.path.dirname(os.path.abspath(__file__))
+    project_dir = os.path.dirname(SCRIPT_DIR)
     if output_dir is None:
-        output_dir = os.path.join(project_dir, "output")
+        output_dir = os.path.join(project_dir, "run_all_output")
 
     classic_dir = os.path.join(output_dir, "classic")
     yolo_dir = os.path.join(output_dir, "yolo")
@@ -228,6 +228,7 @@ def run_orchestrator(images_dir, gt_dir=None, yolo_model=None, output_dir=None):
             gt_dir=gt_dir,
             image_dir=images_dir,
             output_dir=eval_dir,
+            save_comparison_figures=False,
         )
         print(f"  -> {len(eval_results)} images evaluated\n")
     else:
@@ -282,7 +283,7 @@ def main():
     )
     parser.add_argument(
         "--output", default=None,
-        help="Output root directory (default: output/)"
+        help="Output root directory (default: run_all_output/)"
     )
 
     args = parser.parse_args()
