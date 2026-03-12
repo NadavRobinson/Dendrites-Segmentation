@@ -10,7 +10,7 @@ import os
 # Supported image extensions
 IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp')
 
-# Scale bar region — bottom fraction of SEM image containing instrument metadata
+# Bottom fraction of SEM images that contains scale-bar/metadata artifacts.
 SCALE_BAR_FRACTION = 0.06398537477148080438756855575868
 
 
@@ -48,7 +48,9 @@ def save_image(image, path):
     path : str
         Output file path.
     """
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     cv2.imwrite(path, image)
 
 
@@ -77,8 +79,7 @@ def list_images(directory):
 
 def remove_scale_bar(image):
     """
-    Mask the bottom region of an SEM image (instrument metadata / scale bar).
-    Crops out the bottom region.
+    Remove the bottom scale-bar/metadata region from an SEM image.
 
     Parameters
     ----------
@@ -90,7 +91,7 @@ def remove_scale_bar(image):
     cleaned : np.ndarray
         Image with bottom metadata region removed.
     """
-    h, w = image.shape[:2]
+    h = image.shape[0]
     cutoff = int(h * (1 - SCALE_BAR_FRACTION))
 
     cleaned = image.copy()
@@ -125,7 +126,7 @@ def _to_display_uint8(image):
 
 def create_overlay(image, mask, color=(0, 255, 0), alpha=0.4):
     """
-    Create a semi-transparent colored overlay of a mask on a grayscale image.
+    Create a semi-transparent colored overlay of a mask on an image.
 
     Parameters
     ----------
@@ -158,7 +159,7 @@ def create_overlay(image, mask, color=(0, 255, 0), alpha=0.4):
         base = np.repeat(base, 3, axis=2)
     base = _to_display_uint8(base)
 
-    # Accept HxW, HxWx1, or other singleton-expanded masks.
+    # Accept HxW, HxWx1, or other singleton-expanded mask layouts.
     mask = np.asarray(mask)
     if mask.ndim > 2:
         mask = np.squeeze(mask)
@@ -205,6 +206,9 @@ def create_comparison_strip(images, titles, height=400):
     strip : np.ndarray
         Horizontally concatenated comparison image (H, W, 3).
     """
+    if not images:
+        raise ValueError("`images` must contain at least one image.")
+
     panels = []
     for img, title in zip(images, titles):
         img = _to_display_uint8(img)
@@ -252,8 +256,8 @@ def create_comparison_strip(images, titles, height=400):
 
 
 if __name__ == "__main__":
-    # Synthetic test: create a fake SEM image and test all utilities
-    print("=== utils.py — Synthetic Self-Test ===\n")
+    # Synthetic self-test for utility functions.
+    print("=== utils.py - Synthetic Self-Test ===\n")
 
     # Create a synthetic SEM-like image (512x512)
     np.random.seed(42)
@@ -267,10 +271,12 @@ if __name__ == "__main__":
     print(f"Synthetic image shape: {synth.shape}")
     print(f"Pixel range: [{synth.min()}, {synth.max()}]")
 
-    # Test cleaning
-    cleaned = clean_sem_image(synth)
-    print(f"After cleaning — bottom row mean: {cleaned[500, :].mean():.1f} "
-          f"(was {synth[500, :].mean():.1f})")
+    # Test scale-bar removal.
+    cleaned = remove_scale_bar(synth)
+    print(
+        f"After cleaning - output shape: {cleaned.shape}, "
+        f"original shape: {synth.shape}"
+    )
 
     # Test overlay
     mask = np.zeros((512, 512), dtype=np.uint8)
@@ -293,3 +299,4 @@ if __name__ == "__main__":
     save_image(strip, os.path.join(out_dir, "synth_comparison.png"))
     print(f"\nSaved test outputs to {out_dir}/")
     print("All utils tests passed.")
+

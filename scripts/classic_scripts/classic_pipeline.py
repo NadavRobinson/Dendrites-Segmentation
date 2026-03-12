@@ -1,13 +1,13 @@
 """
-Classic CV pipeline for SEM dendrite segmentation.
+Classic computer-vision pipeline for SEM dendrite segmentation.
 
 Four-stage pipeline:
-  A. Pre-processing  — histogram normalization, CLAHE, bilateral filter
-  B. Segmentation    — adaptive thresholding (primary), Otsu (fallback)
-  C. Post-processing — morphological reconstruction, closing, small component removal
-  D. Separation      — distance transform + watershed for touching branches
+  A. Pre-processing: histogram normalization, CLAHE, bilateral filtering
+  B. Segmentation: adaptive thresholding to build a binary mask
+  C. Post-processing: reconstruction, closing, and optional small-component filtering
+  D. Separation: distance transform and watershed for touching branches
 
-Plus skeletonization via Zhang-Suen thinning.
+Includes skeleton extraction for centerline analysis.
 """
 
 import argparse
@@ -18,7 +18,7 @@ import sys
 
 from skimage.morphology import reconstruction, skeletonize
 
-# Add project directory to path for imports
+# Add local script directory so `utils.py` can be imported when run as a script.
 sys.path.insert(0, os.path.dirname(__file__))
 from utils import (
     load_image,
@@ -30,7 +30,7 @@ from utils import (
 )
 
 # ---------------------------------------------------------------------------
-# Tunable parameters (all constants at top for easy adjustment)
+# Tunable parameters
 # ---------------------------------------------------------------------------
 
 # Stage A: Pre-processing
@@ -41,7 +41,7 @@ BILATERAL_D = 9
 BILATERAL_SIGMA_COLOR = 50
 BILATERAL_SIGMA_SPACE = 50
 
-# # Stage B: Segmentation
+# Stage B: Segmentation
 ADAPTIVE_BLOCK_SIZE = 67
 ADAPTIVE_C = -12
 
@@ -98,8 +98,12 @@ PARAMETER_PROFILES = {
 
 
 def apply_parameter_profile(profile_name):
-    """
-    Apply a named parameter profile by updating global constants.
+    """Apply one predefined parameter profile to global constants.
+
+    Parameters
+    ----------
+    profile_name : str
+        Parameter profile key in ``PARAMETER_PROFILES``.
     """
     profile = PARAMETER_PROFILES[profile_name]
 
@@ -200,7 +204,7 @@ def apply_bilateral_filter(image):
 
 def preprocess(image):
     """
-    Full pre-processing pipeline: clean → normalize → CLAHE → bilateral.
+    Run pre-processing: crop scale bar, normalize, CLAHE, then bilateral filtering.
 
     Parameters
     ----------
@@ -235,7 +239,7 @@ def preprocess(image):
 
 def segment_adaptive(image, block_size=ADAPTIVE_BLOCK_SIZE, c=ADAPTIVE_C):
     """
-    Adaptive thresholding — computes a local threshold per pixel based on
+    Adaptive thresholding computes a local threshold per pixel based on
     neighborhood mean. Preferred for SEM images with non-uniform illumination.
 
     Parameters
@@ -249,7 +253,7 @@ def segment_adaptive(image, block_size=ADAPTIVE_BLOCK_SIZE, c=ADAPTIVE_C):
         Binary mask (0 or 255), dtype uint8.
     """
 
-    # Adaptive threshold block size must be odd and >= 3
+    # Adaptive threshold block size must be odd and at least 3.
     block_size = int(block_size)
     if block_size < 3:
         block_size = 3
@@ -315,14 +319,14 @@ def morphological_reconstruction(mask, kernel_size=None, iterations=None):
     kernel = cv2.getStructuringElement(
         cv2.MORPH_ELLIPSE, (kernel_size, kernel_size)
     )
-    # Create marker by aggressive erosion — only thick cores remain
+    # Create marker by erosion, retaining thicker branch cores.
     marker = cv2.erode(mask, kernel, iterations=iterations)
 
-    # skimage reconstruction expects float images in [0, 1]
+    # skimage reconstruction expects float images in [0, 1].
     marker_f = (marker / 255.0).astype(np.float64)
     mask_f = (mask / 255.0).astype(np.float64)
 
-    # Geodesic dilation: grow marker within mask boundaries
+    # Geodesic dilation: grow marker within mask boundaries.
     reconstructed_f = reconstruction(marker_f, mask_f, method='dilation')
 
     reconstructed = (reconstructed_f * 255).astype(np.uint8)
@@ -352,10 +356,8 @@ def apply_closing(mask):
 def remove_small_components(mask, min_area=MIN_COMPONENT_AREA,
                             proximity_radius=None, proximity_ratio=None):
     """
-    Remove connected components smaller than min_area pixels,
-    UNLESS they are close to other components (potential small branches).
-    Based on the physical assumption that dendrites are large,
-    continuous structures or small branches near larger ones.
+    Remove connected components smaller than ``min_area`` unless they appear
+    connected to nearby foreground.
 
     Parameters
     ----------
@@ -386,27 +388,21 @@ def remove_small_components(mask, min_area=MIN_COMPONENT_AREA,
     )
     h, w = mask.shape
     cleaned = np.zeros_like(mask)
-    kept_by_area = 0
-    kept_by_proximity = 0
-
     for i in range(1, num_labels):
         area = int(stats[i, cv2.CC_STAT_AREA])
         if area >= min_area:
             cleaned[labels == i] = 255
-            kept_by_area += 1
             continue
 
-        # For small components, check proximity to other components (user idea)
         cx, cy = centroids[i]
-        
-        # Calculate dynamic radius to ensure we look outside the component (user idea)
+
+        # Expand probe radius so the sampled ring is outside the component.
         w_i = stats[i, cv2.CC_STAT_WIDTH]
         h_i = stats[i, cv2.CC_STAT_HEIGHT]
         comp_extent = 0.5 * np.sqrt(w_i**2 + h_i**2)
-        # Use a minimum of proximity_radius, but at least 5px outside the bounding box
         current_radius = max(proximity_radius, comp_extent + 10)
 
-        # Sample points on the perimeter of a circle with current_radius
+        # Sample a ring around the component to estimate nearby foreground.
         num_samples = int(max(36, 2 * np.pi * current_radius))
         white_count = 0
 
@@ -414,17 +410,14 @@ def remove_small_components(mask, min_area=MIN_COMPONENT_AREA,
             px = int(round(cx + current_radius * np.cos(angle)))
             py = int(round(cy + current_radius * np.sin(angle)))
 
-            # Check bounds
             if 0 <= px < w and 0 <= py < h:
-                # Proximity: Count any OTHER white components (non-zero labels)
                 other_label = labels[py, px]
                 if other_label != 0 and other_label != i:
                     white_count += 1
 
         if num_samples > 0 and (float(white_count) / num_samples) >= proximity_ratio:
             cleaned[labels == i] = 255
-            kept_by_proximity += 1
-    
+
     return cleaned
 
 
@@ -482,7 +475,7 @@ def separate_branches(mask):
 
     Process:
       1. Compute distance transform of the binary mask
-      2. Threshold at a fraction of the maximum distance → foreground markers
+      2. Threshold at a fraction of the maximum distance to obtain foreground markers
       3. Identify background (far from any foreground)
       4. Label markers with connected components
       5. Run watershed to find boundaries between touching branches
@@ -509,15 +502,15 @@ def separate_branches(mask):
     )
     sure_fg = sure_fg.astype(np.uint8)
 
-    # Sure background — region far from any foreground
+    # Sure background region.
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     sure_bg = cv2.dilate(mask, kernel, iterations=3)
 
-    # Unknown region — between sure foreground and sure background
+    # Unknown region between sure foreground and sure background.
     unknown = cv2.subtract(sure_bg, sure_fg)
 
     # Label markers for watershed
-    num_labels, markers = cv2.connectedComponents(sure_fg)
+    _, markers = cv2.connectedComponents(sure_fg)
     markers = markers + 1  # background = 1, not 0
     markers[unknown == 255] = 0  # unknown = 0 (watershed will determine)
 
@@ -556,9 +549,20 @@ def skeletonize_mask(mask):
 
 
 def restore_mask_to_original_canvas(mask, original_image):
-    """
-    Restore cropped mask-like outputs to the original image size.
-    Missing area is filled with black.
+    """Align a processed mask canvas to the original image dimensions.
+
+    Parameters
+    ----------
+    mask : np.ndarray
+        Processed mask or skeleton image.
+    original_image : np.ndarray
+        Source image that defines the target dimensions.
+
+    Returns
+    -------
+    np.ndarray
+        Mask placed on an output canvas with the same height and width as the
+        original image.
     """
     if mask is None or original_image is None:
         return mask
@@ -811,3 +815,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+

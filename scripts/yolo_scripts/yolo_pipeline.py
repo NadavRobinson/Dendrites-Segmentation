@@ -1,12 +1,11 @@
 """
 YOLO-Seg pipeline for SEM dendrite segmentation.
 
-Uses ultralytics YOLOv11 instance segmentation with transfer learning
-from COCO pretrained weights. Handles dataset validation, training,
-single/batch inference, and mask extraction.
+Provides dataset normalization/validation, training, and
+single-image or batch inference for dendrite mask extraction.
 
 Usage:
-    python yolo_pipeline.py train --data <dataset_yaml> [--epochs 100] [--model yolo11n-seg.pt]
+    python yolo_pipeline.py train --data <dataset_yaml> [--epochs 100] [--model yolo11x-seg.pt]
     python yolo_pipeline.py predict --model <weights.pt> --source <image_or_dir> [--output <dir>]
 """
 
@@ -18,7 +17,7 @@ import argparse
 
 from skimage.morphology import skeletonize
 
-# Add project directory to path for imports
+# Add local script directory so `utils.py` can be imported when run as a script.
 sys.path.insert(0, os.path.dirname(__file__))
 try:
     from utils import save_image, list_images
@@ -31,7 +30,7 @@ except ModuleNotFoundError:
 # Training hyperparameters
 # ---------------------------------------------------------------------------
 
-DEFAULT_MODEL = "yolo11x-seg.pt"   # Nano model — fast training, decent accuracy
+DEFAULT_MODEL = "yolo11x-seg.pt"   # Baseline pretrained segmentation checkpoint.
 DEFAULT_EPOCHS = 100
 DEFAULT_IMGSZ = 640
 DEFAULT_BATCH = 8
@@ -122,16 +121,16 @@ def prepare_yolo_dataset(roboflow_dir, output_yaml=None):
 
     Expected Roboflow export structure:
         roboflow_dir/
-        ├── data.yaml
-        ├── train/
-        │   ├── images/
-        │   └── labels/
-        ├── valid/
-        │   ├── images/
-        │   └── labels/
-        └── test/   (optional)
-            ├── images/
-            └── labels/
+        |- data.yaml
+        |- train/
+        |  |- images/
+        |  `- labels/
+        |- valid/
+        |  |- images/
+        |  `- labels/
+        `- test/   (optional)
+           |- images/
+           `- labels/
 
     Parameters
     ----------
@@ -233,7 +232,8 @@ def train_yolo(dataset_yaml, model=DEFAULT_MODEL, epochs=DEFAULT_EPOCHS,
     lr0 : float
         Initial learning rate.
     project : str or None
-        Output project directory. Defaults to 'output/yolo/train'.
+        Output project directory. If None, defaults to
+        ``scripts/yolo_scripts/output/yolo/train``.
     workers : int
         Number of dataloader workers. Use 0 on restricted Windows setups.
 
@@ -287,10 +287,17 @@ def train_yolo(dataset_yaml, model=DEFAULT_MODEL, epochs=DEFAULT_EPOCHS,
 # ===========================================================================
 
 def _prepare_image_for_yolo(image_path):
-    """
-    Load an image and ensure 3-channel BGR format for YOLO inference.
+    """Load an image and convert it to 3-channel uint8 BGR for YOLO.
 
-    SEM inputs may be grayscale or BGRA; YOLO models expect 3 channels.
+    Parameters
+    ----------
+    image_path : str
+        Path to an input image.
+
+    Returns
+    -------
+    np.ndarray
+        Image in BGR format with dtype ``uint8``.
     """
     image = cv2.imread(image_path, cv2.IMREAD_UNCHANGED)
     if image is None:
@@ -439,6 +446,7 @@ def yolo_mask_to_skeleton(mask):
 # ===========================================================================
 
 def main():
+    """CLI entry point for training and inference commands."""
     parser = argparse.ArgumentParser(
         description="YOLO-Seg pipeline for SEM dendrite segmentation"
     )
@@ -504,3 +512,4 @@ def main():
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         main()
+
